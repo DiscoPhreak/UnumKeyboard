@@ -1,0 +1,44 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local properties
+local.properties
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# macOS
+.DS_Store
+
+# Android
+android/app/build/
+android/build/
+
+# iOS
+ios/*.xcodeproj/xcuserdata/
+ios/*.xcworkspace/xcuserdata/
+ios/build/
+ios/DerivedData/
+ios/Pods/
+
+# KMP
+shared/build/
+
+# Dictionary build outputs
+*.udict
+
+# ML model artifacts
+ml/export/*.onnx
+ml/train/__pycache__/
+ml/train/*.pt
+ml/train/*.bin
+
+# Python
+__pycache__/
+*.pyc
+.venv/
