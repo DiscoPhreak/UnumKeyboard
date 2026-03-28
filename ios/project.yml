@@ -1,0 +1,30 @@
+name: UnumKeyboard
+options:
+  bundleIdPrefix: com.unum
+  deploymentTarget:
+    iOS: "15.0"
+
+targets:
+  UnumKeyboard:
+    type: application
+    platform: iOS
+    sources:
+      - UnumKeyboard
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.unum.keyboard
+        INFOPLIST_GENERATION: true
+        SWIFT_VERSION: "5.9"
+
+  KeyboardExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - KeyboardExtension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.unum.keyboard.KeyboardExtension
+        INFOPLIST_FILE: KeyboardExtension/Info.plist
+        SWIFT_VERSION: "5.9"
+    dependencies:
+      - target: UnumKeyboard
