@@ -89,6 +89,16 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
         }
     }
 
+    func keyboardView(_ view: KeyboardView, didGestureWord word: String, alternatives: [String]) {
+        // Insert gesture word with trailing space
+        textDocumentProxy.insertText(word + " ")
+        currentWord = ""
+        // Show alternatives in suggestion bar if available
+        if !alternatives.isEmpty {
+            suggestionBar.updateSuggestions(alternatives)
+        }
+    }
+
     // MARK: - SuggestionBarDelegate
 
     func suggestionBar(_ bar: SuggestionBar, didSelectSuggestion word: String) {

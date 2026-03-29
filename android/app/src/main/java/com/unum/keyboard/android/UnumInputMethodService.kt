@@ -8,6 +8,7 @@ import android.view.inputmethod.EditorInfo
 import android.widget.LinearLayout
 import com.unum.keyboard.android.ui.KeyboardView
 import com.unum.keyboard.android.ui.SuggestionBar
+import com.unum.keyboard.gesture.GestureCandidate
 import com.unum.keyboard.prediction.PredictionService
 import com.unum.keyboard.prediction.StubNeuralReranker
 import com.unum.keyboard.prediction.TwoStagePipeline
@@ -75,6 +76,11 @@ class UnumInputMethodService : InputMethodService(),
 
         keyboardView = KeyboardView(this).also {
             it.listener = this
+            // Enable gesture typing and provide dictionary
+            val gestureEnabled = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
+                .getBoolean("gesture_typing", false)
+            it.gestureTypingEnabled = gestureEnabled
+            predictionService.dictionary?.let { dict -> it.setDictionary(dict) }
             container.addView(it)
         }
 
@@ -157,6 +163,20 @@ class UnumInputMethodService : InputMethodService(),
             }
         }
         ic.commitText("\n", 1)
+    }
+
+    override fun onGestureWord(candidates: List<GestureCandidate>) {
+        // Show alternative gesture candidates in the suggestion bar
+        if (candidates.isNotEmpty()) {
+            suggestionBar?.updateSuggestions(candidates.map { it.word })
+            // Track the gesture word as the current word for replacement
+            val topWord = candidates[0].word
+            contextWords.add(topWord)
+            if (contextWords.size > 5) contextWords.removeAt(0)
+            pipeline?.onWordCommitted(topWord)
+            currentWord.clear()
+            keyboardView?.currentPrefix = ""
+        }
     }
 
     override fun onSuggestionSelected(word: String) {

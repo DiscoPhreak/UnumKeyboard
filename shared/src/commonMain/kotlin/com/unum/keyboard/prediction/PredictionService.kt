@@ -5,7 +5,9 @@ package com.unum.keyboard.prediction
  * and provides a simple API for the keyboard UI.
  */
 class PredictionService {
-    private var dictionary: TrieDictionary? = null
+    /** The loaded dictionary — exposed for gesture typing decoder */
+    var dictionary: TrieDictionary? = null
+        private set
     private var ngramModel: NGramModel? = null
     private var autoCorrect: AutoCorrect? = null
     private var engine: PredictionEngine? = null

@@ -6,6 +6,8 @@ protocol KeyboardViewDelegate: AnyObject {
     func keyboardViewDidTapEnter(_ view: KeyboardView)
     func keyboardViewDidTapShift(_ view: KeyboardView)
     func keyboardViewDidTapSymbolToggle(_ view: KeyboardView, keyId: String)
+    /// Called when gesture typing produces a word
+    func keyboardView(_ view: KeyboardView, didGestureWord word: String, alternatives: [String])
 }
 
 class KeyboardView: UIView {
@@ -51,14 +53,33 @@ class KeyboardView: UIView {
     private var flickOriginButton: FlickKeyButton?
     private var flickFired: Bool = false
 
+    // Gesture typing (M8)
+    var gestureTypingEnabled: Bool = false
+    private var isGesturing: Bool = false
+    private var gestureKeySequence: [String] = []
+    private var lastGestureKeyId: String? = nil
+    private var gestureTrailLayer = CAShapeLayer()
+    private var gestureTrailPath = UIBezierPath()
+
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = bgColor
+        setupGestureTrail()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         backgroundColor = bgColor
+        setupGestureTrail()
+    }
+
+    private func setupGestureTrail() {
+        gestureTrailLayer.strokeColor = UIColor.white.withAlphaComponent(0.5).cgColor
+        gestureTrailLayer.fillColor = nil
+        gestureTrailLayer.lineWidth = 3
+        gestureTrailLayer.lineCap = .round
+        gestureTrailLayer.lineJoin = .round
+        layer.addSublayer(gestureTrailLayer)
     }
 
     override func layoutSubviews() {
@@ -258,6 +279,15 @@ class KeyboardView: UIView {
             let point = touch.location(in: self)
             flickStartPoint = point
             flickStartTime = touch.timestamp
+
+            // Start gesture tracking if enabled
+            if gestureTypingEnabled && sender.kind == .character {
+                gestureKeySequence = [sender.keyId.lowercased()]
+                lastGestureKeyId = sender.keyId
+                gestureTrailPath = UIBezierPath()
+                gestureTrailPath.move(to: point)
+                isGesturing = false
+            }
         }
 
         if sender.kind == .backspace {
@@ -277,6 +307,30 @@ class KeyboardView: UIView {
         let point = touch.location(in: self)
         let elapsed = touch.timestamp - flickStartTime
 
+        // Gesture typing: track path across keys
+        if gestureTypingEnabled && !gestureKeySequence.isEmpty {
+            gestureTrailPath.addLine(to: point)
+
+            // Find which button is under the touch point
+            if let hitButton = keyButtons.first(where: { $0.frame.contains(point) }),
+               hitButton.kind == .character,
+               hitButton.keyId != lastGestureKeyId {
+                gestureKeySequence.append(hitButton.keyId.lowercased())
+                lastGestureKeyId = hitButton.keyId
+
+                // Transition to gesture mode once we've crossed 2+ keys
+                if gestureKeySequence.count >= 2 && !isGesturing {
+                    isGesturing = true
+                    stopBackspaceRepeat()
+                }
+            }
+
+            if isGesturing {
+                gestureTrailLayer.path = gestureTrailPath.cgPath
+                return
+            }
+        }
+
         if elapsed > maxFlickDuration { return }
 
         let dx = point.x - flickStartPoint.x
@@ -291,6 +345,7 @@ class KeyboardView: UIView {
                 if let text = flickChar(for: originButton, direction: direction) {
                     flickFired = true
                     stopBackspaceRepeat()
+                    gestureKeySequence = []
                     delegate?.keyboardView(self, didTapText: text)
                     if shiftState == .on { shiftState = .off }
                     sender.backgroundColor = sender.normalBg
@@ -302,6 +357,24 @@ class KeyboardView: UIView {
     @objc private func keyTouchUp(_ sender: FlickKeyButton, event: UIEvent) {
         sender.backgroundColor = sender.normalBg
         stopBackspaceRepeat()
+
+        // Handle gesture typing completion
+        if isGesturing && gestureKeySequence.count >= 2 {
+            let word = gestureKeySequence.joined()
+            delegate?.keyboardView(self, didGestureWord: word, alternatives: [])
+            isGesturing = false
+            gestureKeySequence = []
+            lastGestureKeyId = nil
+            gestureTrailLayer.path = nil
+            flickOriginButton = nil
+            return
+        }
+
+        // Clear gesture state
+        isGesturing = false
+        gestureKeySequence = []
+        lastGestureKeyId = nil
+        gestureTrailLayer.path = nil
 
         if flickFired {
             flickOriginButton = nil
@@ -354,6 +427,10 @@ class KeyboardView: UIView {
         stopBackspaceRepeat()
         flickOriginButton = nil
         flickFired = false
+        isGesturing = false
+        gestureKeySequence = []
+        lastGestureKeyId = nil
+        gestureTrailLayer.path = nil
     }
 
     private func resolveDirection(dx: CGFloat, dy: CGFloat) -> FlickDirection {
