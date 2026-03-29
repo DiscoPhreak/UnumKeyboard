@@ -1,12 +1,16 @@
 package com.unum.keyboard.android
 
 import android.inputmethodservice.InputMethodService
+import android.os.Handler
+import android.os.Looper
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.LinearLayout
 import com.unum.keyboard.android.ui.KeyboardView
 import com.unum.keyboard.android.ui.SuggestionBar
 import com.unum.keyboard.prediction.PredictionService
+import com.unum.keyboard.prediction.StubNeuralReranker
+import com.unum.keyboard.prediction.TwoStagePipeline
 
 class UnumInputMethodService : InputMethodService(),
     KeyboardView.KeyboardActionListener,
@@ -15,7 +19,10 @@ class UnumInputMethodService : InputMethodService(),
     private var keyboardView: KeyboardView? = null
     private var suggestionBar: SuggestionBar? = null
     private val predictionService = PredictionService()
+    private var pipeline: TwoStagePipeline? = null
     private val currentWord = StringBuilder()
+    private val contextWords = mutableListOf<String>()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
@@ -28,10 +35,32 @@ class UnumInputMethodService : InputMethodService(),
             val bigrams = assets.open("en-US/bigrams.txt").bufferedReader().readText()
             val trigrams = assets.open("en-US/trigrams.txt").bufferedReader().readText()
             predictionService.initialize(unigrams, bigrams, trigrams)
+
+            // Initialize two-stage pipeline
+            // Uses StubNeuralReranker until a real ONNX model is available
+            val enhancedPredictions = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
+                .getBoolean("enhanced_predictions", true)
+
+            pipeline = TwoStagePipeline(
+                predictionService = predictionService,
+                reranker = StubNeuralReranker(),
+                enabled = enhancedPredictions
+            ).also { p ->
+                p.onPredictionsUpdated = { predictions ->
+                    mainHandler.post {
+                        suggestionBar?.updateSuggestions(predictions.map { it.word })
+                    }
+                }
+                p.loadModel()
+            }
         } catch (e: Exception) {
-            // Dictionary loading failed — predictions will be empty
             android.util.Log.e("UnumIME", "Failed to load dictionary", e)
         }
+    }
+
+    override fun onDestroy() {
+        pipeline?.destroy()
+        super.onDestroy()
     }
 
     override fun onCreateInputView(): View {
@@ -55,8 +84,8 @@ class UnumInputMethodService : InputMethodService(),
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
         currentWord.clear()
-        predictionService.resetContext()
-        updatePredictions()
+        contextWords.clear()
+        pipeline?.onSentenceBoundary()
     }
 
     override fun onText(text: String) {
@@ -65,21 +94,24 @@ class UnumInputMethodService : InputMethodService(),
 
         if (text == " ") {
             if (currentWord.isNotEmpty()) {
-                predictionService.commitWord(currentWord.toString())
+                val word = currentWord.toString()
+                contextWords.add(word)
+                if (contextWords.size > 5) contextWords.removeAt(0)
+                pipeline?.onWordCommitted(word)
                 currentWord.clear()
             }
         } else if (text == "." || text == "!" || text == "?" || text == "\n") {
             if (currentWord.isNotEmpty()) {
-                predictionService.commitWord(currentWord.toString())
+                val word = currentWord.toString()
+                pipeline?.onWordCommitted(word)
                 currentWord.clear()
             }
-            predictionService.resetContext()
+            contextWords.clear()
+            pipeline?.onSentenceBoundary()
         } else {
             currentWord.append(text)
+            pipeline?.onKeystroke(currentWord.toString(), contextWords)
         }
-
-        predictionService.updatePrefix(currentWord.toString())
-        updatePredictions()
     }
 
     override fun onDelete() {
@@ -90,8 +122,7 @@ class UnumInputMethodService : InputMethodService(),
             currentWord.deleteCharAt(currentWord.length - 1)
         }
 
-        predictionService.updatePrefix(currentWord.toString())
-        updatePredictions()
+        pipeline?.onKeystroke(currentWord.toString(), contextWords)
     }
 
     override fun onEnter() {
@@ -99,10 +130,11 @@ class UnumInputMethodService : InputMethodService(),
         val editorInfo = currentInputEditorInfo
 
         if (currentWord.isNotEmpty()) {
-            predictionService.commitWord(currentWord.toString())
+            pipeline?.onWordCommitted(currentWord.toString())
             currentWord.clear()
         }
-        predictionService.resetContext()
+        contextWords.clear()
+        pipeline?.onSentenceBoundary()
 
         if (editorInfo != null) {
             val action = editorInfo.imeOptions and
@@ -115,32 +147,24 @@ class UnumInputMethodService : InputMethodService(),
                 EditorInfo.IME_ACTION_DONE,
                 EditorInfo.IME_ACTION_NEXT -> {
                     ic.performEditorAction(action)
-                    updatePredictions()
                     return
                 }
             }
         }
         ic.commitText("\n", 1)
-        updatePredictions()
     }
 
     override fun onSuggestionSelected(word: String) {
         val ic = currentInputConnection ?: return
 
-        // Delete the current partial word and replace with the selected prediction
         if (currentWord.isNotEmpty()) {
             ic.deleteSurroundingText(currentWord.length, 0)
         }
 
         ic.commitText("$word ", 1)
-        predictionService.commitWord(word)
+        contextWords.add(word)
+        if (contextWords.size > 5) contextWords.removeAt(0)
+        pipeline?.onWordCommitted(word)
         currentWord.clear()
-        predictionService.updatePrefix("")
-        updatePredictions()
-    }
-
-    private fun updatePredictions() {
-        val predictions = predictionService.predict(3)
-        suggestionBar?.updateSuggestions(predictions.map { it.word })
     }
 }
