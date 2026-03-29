@@ -6,17 +6,37 @@ object QwertyLayouts {
         id = "en-US-qwerty-lower",
         rows = listOf(
             KeyRow(listOf(
-                Key("q", "q"), Key("w", "w"), Key("e", "e"), Key("r", "r"), Key("t", "t"),
-                Key("y", "y"), Key("u", "u"), Key("i", "i"), Key("o", "o"), Key("p", "p")
+                Key("q", "q", flickUp = "1"),
+                Key("w", "w", flickUp = "2"),
+                Key("e", "e", flickUp = "3", flickRight = "é"),
+                Key("r", "r", flickUp = "4"),
+                Key("t", "t", flickUp = "5"),
+                Key("y", "y", flickUp = "6"),
+                Key("u", "u", flickUp = "7", flickRight = "ü"),
+                Key("i", "i", flickUp = "8", flickRight = "í"),
+                Key("o", "o", flickUp = "9", flickRight = "ó"),
+                Key("p", "p", flickUp = "0")
             )),
             KeyRow(listOf(
-                Key("a", "a"), Key("s", "s"), Key("d", "d"), Key("f", "f"), Key("g", "g"),
-                Key("h", "h"), Key("j", "j"), Key("k", "k"), Key("l", "l")
+                Key("a", "a", flickUp = "@", flickRight = "á"),
+                Key("s", "s", flickUp = "#", flickRight = "$"),
+                Key("d", "d", flickUp = "&"),
+                Key("f", "f", flickUp = "*"),
+                Key("g", "g", flickUp = "-"),
+                Key("h", "h", flickUp = "+"),
+                Key("j", "j", flickUp = "("),
+                Key("k", "k", flickUp = ")"),
+                Key("l", "l", flickUp = "'")
             )),
             KeyRow(listOf(
                 Key("shift", "⇧", width = 1.5f, type = KeyType.SHIFT),
-                Key("z", "z"), Key("x", "x"), Key("c", "c"), Key("v", "v"),
-                Key("b", "b"), Key("n", "n"), Key("m", "m"),
+                Key("z", "z", flickUp = "!"),
+                Key("x", "x", flickUp = "\""),
+                Key("c", "c", flickUp = ":", flickRight = "ç"),
+                Key("v", "v", flickUp = ";"),
+                Key("b", "b", flickUp = "/"),
+                Key("n", "n", flickUp = "?", flickRight = "ñ"),
+                Key("m", "m", flickUp = ","),
                 Key("backspace", "⌫", width = 1.5f, type = KeyType.BACKSPACE)
             )),
             KeyRow(listOf(
@@ -33,17 +53,37 @@ object QwertyLayouts {
         id = "en-US-qwerty-upper",
         rows = listOf(
             KeyRow(listOf(
-                Key("Q", "Q"), Key("W", "W"), Key("E", "E"), Key("R", "R"), Key("T", "T"),
-                Key("Y", "Y"), Key("U", "U"), Key("I", "I"), Key("O", "O"), Key("P", "P")
+                Key("Q", "Q", flickUp = "1"),
+                Key("W", "W", flickUp = "2"),
+                Key("E", "E", flickUp = "3", flickRight = "É"),
+                Key("R", "R", flickUp = "4"),
+                Key("T", "T", flickUp = "5"),
+                Key("Y", "Y", flickUp = "6"),
+                Key("U", "U", flickUp = "7", flickRight = "Ü"),
+                Key("I", "I", flickUp = "8", flickRight = "Í"),
+                Key("O", "O", flickUp = "9", flickRight = "Ó"),
+                Key("P", "P", flickUp = "0")
             )),
             KeyRow(listOf(
-                Key("A", "A"), Key("S", "S"), Key("D", "D"), Key("F", "F"), Key("G", "G"),
-                Key("H", "H"), Key("J", "J"), Key("K", "K"), Key("L", "L")
+                Key("A", "A", flickUp = "@", flickRight = "Á"),
+                Key("S", "S", flickUp = "#", flickRight = "$"),
+                Key("D", "D", flickUp = "&"),
+                Key("F", "F", flickUp = "*"),
+                Key("G", "G", flickUp = "-"),
+                Key("H", "H", flickUp = "+"),
+                Key("J", "J", flickUp = "("),
+                Key("K", "K", flickUp = ")"),
+                Key("L", "L", flickUp = "'")
             )),
             KeyRow(listOf(
                 Key("shift", "⇧", width = 1.5f, type = KeyType.SHIFT),
-                Key("Z", "Z"), Key("X", "X"), Key("C", "C"), Key("V", "V"),
-                Key("B", "B"), Key("N", "N"), Key("M", "M"),
+                Key("Z", "Z", flickUp = "!"),
+                Key("X", "X", flickUp = "\""),
+                Key("C", "C", flickUp = ":", flickRight = "Ç"),
+                Key("V", "V", flickUp = ";"),
+                Key("B", "B", flickUp = "/"),
+                Key("N", "N", flickUp = "?", flickRight = "Ñ"),
+                Key("M", "M", flickUp = ","),
                 Key("backspace", "⌫", width = 1.5f, type = KeyType.BACKSPACE)
             )),
             KeyRow(listOf(

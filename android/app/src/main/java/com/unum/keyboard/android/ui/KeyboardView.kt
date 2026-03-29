@@ -13,8 +13,10 @@ import android.view.MotionEvent
 import android.view.View
 import com.unum.keyboard.core.KeyAction
 import com.unum.keyboard.core.KeyboardState
+import com.unum.keyboard.gesture.FlickGestureDetector
 import com.unum.keyboard.hittarget.DynamicHitTargetResolver
 import com.unum.keyboard.hittarget.TouchCalibrator
+import com.unum.keyboard.layout.FlickDirection
 import com.unum.keyboard.layout.KeyGeometry
 import com.unum.keyboard.layout.KeyType
 import com.unum.keyboard.layout.LayoutEngine
@@ -39,6 +41,10 @@ class KeyboardView @JvmOverloads constructor(
 
     // Dynamic hit target resolution (M6)
     private val hitTargetResolver = DynamicHitTargetResolver()
+
+    // Flick gesture detection (M7)
+    private val flickDetector = FlickGestureDetector()
+    private var flickOriginKey: KeyGeometry? = null
 
     /** Current word prefix — set by the IME to inform hit target predictions */
     var currentPrefix: String = ""
@@ -77,6 +83,10 @@ class KeyboardView @JvmOverloads constructor(
     private val backgroundPaint = Paint().apply {
         color = BG_COLOR
     }
+    private val flickHintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = FLICK_HINT_COLOR
+        textAlign = Paint.Align.CENTER
+    }
 
     private var pressedKeyId: String? = null
     private val keyCornerRadius = 8f
@@ -111,6 +121,7 @@ class KeyboardView @JvmOverloads constructor(
             )
             textPaint.textSize = TEXT_SIZE * resources.displayMetrics.density
             specialTextPaint.textSize = SPECIAL_TEXT_SIZE * resources.displayMetrics.density
+            flickHintPaint.textSize = FLICK_HINT_SIZE * resources.displayMetrics.density
         }
     }
 
@@ -138,6 +149,14 @@ class KeyboardView @JvmOverloads constructor(
             val label = getKeyLabel(geo)
             val textY = geo.center.y - (paint.descent() + paint.ascent()) / 2f
             canvas.drawText(label, geo.center.x, textY, paint)
+
+            // Draw flick-up hint in top-right corner of key
+            val flickUp = geo.key.flickUp
+            if (flickUp != null && !isSpecial) {
+                val hintX = geo.bounds.right - cornerRadius
+                val hintY = geo.bounds.top + flickHintPaint.textSize + 2f * density
+                canvas.drawText(flickUp, hintX, hintY, flickHintPaint)
+            }
         }
     }
 
@@ -154,12 +173,15 @@ class KeyboardView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val layout = computedLayout ?: return false
+        val timestamp = event.eventTime
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
                 val geo = resolveKey(event.x, event.y)
                 if (geo != null) {
                     pressedKeyId = geo.key.id
+                    flickOriginKey = geo
+                    flickDetector.onTouchStart(event.x, event.y, timestamp)
                     performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
 
                     if (geo.key.type == KeyType.BACKSPACE) {
@@ -172,27 +194,35 @@ class KeyboardView @JvmOverloads constructor(
                 }
                 return true
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                isBackspaceHeld = false
-                handler.removeCallbacks(backspaceRepeatRunnable)
+            MotionEvent.ACTION_MOVE -> {
+                // Check for flick during move (for immediate feedback)
+                val flickDir = flickDetector.onTouchMove(event.x, event.y, timestamp)
+                if (flickDir != FlickDirection.NONE) {
+                    // Flick detected mid-gesture — handle immediately
+                    val originKey = flickOriginKey
+                    if (originKey != null) {
+                        val flickChar = originKey.key.flickChar(flickDir)
+                        if (flickChar != null) {
+                            // Cancel any backspace repeat
+                            isBackspaceHeld = false
+                            handler.removeCallbacks(backspaceRepeatRunnable)
 
-                if (event.action == MotionEvent.ACTION_UP) {
-                    val geo = resolveKey(event.x, event.y)
-                    if (geo != null) {
-                        // Record touch for calibration learning
-                        hitTargetResolver.calibrator.recordTouch(event.x, event.y, geo)
-                        handleKeyPress(geo)
+                            listener?.onText(flickChar)
+                            keyboardState.autoUnshift()
+                            recomputeLayout()
+                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            pressedKeyId = null
+                            flickOriginKey = null
+                            invalidate()
+                            return true
+                        }
                     }
                 }
 
-                pressedKeyId = null
-                invalidate()
-                return true
-            }
-            MotionEvent.ACTION_MOVE -> {
+                // Normal move tracking for key highlight
                 val geo = resolveKey(event.x, event.y)
                 val newId = geo?.key?.id
-                if (newId != pressedKeyId) {
+                if (newId != pressedKeyId && !flickDetector.tracking) {
                     if (pressedKeyId == "backspace") {
                         isBackspaceHeld = false
                         handler.removeCallbacks(backspaceRepeatRunnable)
@@ -200,6 +230,42 @@ class KeyboardView @JvmOverloads constructor(
                     pressedKeyId = newId
                     invalidate()
                 }
+                return true
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                isBackspaceHeld = false
+                handler.removeCallbacks(backspaceRepeatRunnable)
+
+                if (event.action == MotionEvent.ACTION_UP) {
+                    val flickResult = flickDetector.onTouchEnd(event.x, event.y, timestamp)
+                    val originKey = flickOriginKey
+
+                    if (!flickResult.isTap && flickResult.direction != FlickDirection.NONE && originKey != null) {
+                        // Flick detected on release
+                        val flickChar = originKey.key.flickChar(flickResult.direction)
+                        if (flickChar != null) {
+                            listener?.onText(flickChar)
+                            keyboardState.autoUnshift()
+                            recomputeLayout()
+                        } else {
+                            // No flick char mapped — fall back to primary
+                            handleKeyPress(originKey)
+                        }
+                    } else if (flickResult.isTap) {
+                        // Regular tap
+                        val geo = originKey ?: resolveKey(event.x, event.y)
+                        if (geo != null) {
+                            hitTargetResolver.calibrator.recordTouch(event.x, event.y, geo)
+                            handleKeyPress(geo)
+                        }
+                    }
+                } else {
+                    flickDetector.cancel()
+                }
+
+                pressedKeyId = null
+                flickOriginKey = null
+                invalidate()
                 return true
             }
         }
@@ -255,12 +321,14 @@ class KeyboardView @JvmOverloads constructor(
         private const val TEXT_COLOR = Color.WHITE
         private const val SPECIAL_TEXT_COLOR = 0xFFBBBBBB.toInt()
 
+        private const val FLICK_HINT_COLOR = 0xFF666666.toInt()  // Subtle gray hints
         private const val KEYBOARD_HEIGHT_DP = 260f
         private const val HORIZONTAL_PADDING = 3f  // dp
         private const val VERTICAL_PADDING = 6f    // dp
         private const val KEY_SPACING = 4f          // dp
         private const val TEXT_SIZE = 22f            // sp
         private const val SPECIAL_TEXT_SIZE = 14f    // sp
+        private const val FLICK_HINT_SIZE = 10f      // sp
 
         private const val BACKSPACE_REPEAT_DELAY = 400L   // ms before repeat starts
         private const val BACKSPACE_REPEAT_INTERVAL = 50L  // ms between repeats

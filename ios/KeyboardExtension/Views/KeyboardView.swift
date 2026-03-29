@@ -19,11 +19,18 @@ class KeyboardView: UIView {
     private let specialKeyBgColor = UIColor(white: 0.16, alpha: 1.0)
     private let textColor = UIColor.white
     private let specialTextColor = UIColor(white: 0.73, alpha: 1.0)
+    private let flickHintColor = UIColor(white: 0.40, alpha: 1.0)
 
     private let keyCornerRadius: CGFloat = 6
     private let keySpacing: CGFloat = 4
     private let horizontalPadding: CGFloat = 3
     private let verticalPadding: CGFloat = 6
+
+    // Flick detection constants
+    private let minFlickDistance: CGFloat = 20
+    private let maxFlickDistance: CGFloat = 150
+    private let maxFlickDuration: TimeInterval = 0.3
+    private let directionalityThreshold: CGFloat = 1.5
 
     // Layout state
     enum ShiftState { case off, on, capsLock }
@@ -32,11 +39,17 @@ class KeyboardView: UIView {
     var shiftState: ShiftState = .off { didSet { setNeedsLayout(); setNeedsDisplay() } }
     var layoutMode: LayoutMode = .letters { didSet { setNeedsLayout(); setNeedsDisplay() } }
 
-    private var keyButtons: [KeyButton] = []
+    private var keyButtons: [FlickKeyButton] = []
 
     // Backspace repeat
     private var backspaceTimer: Timer?
     private var backspaceDelayTimer: Timer?
+
+    // Flick tracking
+    private var flickStartPoint: CGPoint = .zero
+    private var flickStartTime: TimeInterval = 0
+    private var flickOriginButton: FlickKeyButton?
+    private var flickFired: Bool = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -52,6 +65,45 @@ class KeyboardView: UIView {
         super.layoutSubviews()
         rebuildKeys()
     }
+
+    // MARK: - Flick Character Mappings
+
+    private func flickMappings(for keyId: String) -> (up: String?, down: String?, left: String?, right: String?) {
+        let isUpper = shiftState != .off
+
+        // Number row flick-up for letter keys
+        let flickMap: [String: (up: String?, down: String?, left: String?, right: String?)] = [
+            "q": ("1", nil, nil, nil), "w": ("2", nil, nil, nil),
+            "e": ("3", nil, nil, isUpper ? "É" : "é"), "r": ("4", nil, nil, nil),
+            "t": ("5", nil, nil, nil), "y": ("6", nil, nil, nil),
+            "u": ("7", nil, nil, isUpper ? "Ü" : "ü"), "i": ("8", nil, nil, isUpper ? "Í" : "í"),
+            "o": ("9", nil, nil, isUpper ? "Ó" : "ó"), "p": ("0", nil, nil, nil),
+            "a": ("@", nil, nil, isUpper ? "Á" : "á"), "s": ("#", nil, nil, "$"),
+            "d": ("&", nil, nil, nil), "f": ("*", nil, nil, nil),
+            "g": ("-", nil, nil, nil), "h": ("+", nil, nil, nil),
+            "j": ("(", nil, nil, nil), "k": (")", nil, nil, nil),
+            "l": ("'", nil, nil, nil),
+            "z": ("!", nil, nil, nil), "x": ("\"", nil, nil, nil),
+            "c": (":", nil, nil, isUpper ? "Ç" : "ç"), "v": (";", nil, nil, nil),
+            "b": ("/", nil, nil, nil), "n": ("?", nil, nil, isUpper ? "Ñ" : "ñ"),
+            "m": (",", nil, nil, nil)
+        ]
+
+        return flickMap[keyId.lowercased()] ?? (nil, nil, nil, nil)
+    }
+
+    private func flickChar(for button: FlickKeyButton, direction: FlickDirection) -> String? {
+        let mapping = flickMappings(for: button.keyId)
+        switch direction {
+        case .up: return mapping.up
+        case .down: return mapping.down
+        case .left: return mapping.left
+        case .right: return mapping.right
+        case .none: return nil
+        }
+    }
+
+    // MARK: - Layout
 
     private func currentLayout() -> [[(id: String, label: String, width: CGFloat, type: KeyKind)]] {
         switch layoutMode {
@@ -162,7 +214,7 @@ class KeyboardView: UIView {
                 let keyWidth = key.width * unitWidth
                 let frame = CGRect(x: keyLeft, y: rowTop, width: keyWidth, height: rowHeight)
 
-                let button = KeyButton(frame: frame)
+                let button = FlickKeyButton(frame: frame)
                 button.keyId = key.id
                 button.label = key.label
                 button.kind = key.type
@@ -170,13 +222,22 @@ class KeyboardView: UIView {
                 button.normalBg = key.type == .character ? keyBgColor : specialKeyBgColor
                 button.pressedBg = keyPressedColor
                 button.labelColor = key.type == .character ? textColor : specialTextColor
+
+                // Set flick hint for letter keys
+                if layoutMode == .letters && key.type == .character {
+                    let mapping = flickMappings(for: key.id)
+                    button.flickUpHint = mapping.up
+                }
+
+                button.flickHintColor = flickHintColor
                 button.layer.cornerRadius = keyCornerRadius
                 button.clipsToBounds = true
                 button.configure()
 
-                button.addTarget(self, action: #selector(keyTouchDown(_:)), for: .touchDown)
-                button.addTarget(self, action: #selector(keyTouchUp(_:)), for: [.touchUpInside])
-                button.addTarget(self, action: #selector(keyTouchCancel(_:)), for: [.touchUpOutside, .touchCancel])
+                button.addTarget(self, action: #selector(keyTouchDown(_:event:)), for: .touchDown)
+                button.addTarget(self, action: #selector(keyTouchDrag(_:event:)), for: [.touchDragInside, .touchDragOutside])
+                button.addTarget(self, action: #selector(keyTouchUp(_:event:)), for: [.touchUpInside, .touchUpOutside])
+                button.addTarget(self, action: #selector(keyTouchCancel(_:)), for: .touchCancel)
 
                 addSubview(button)
                 keyButtons.append(button)
@@ -186,8 +247,18 @@ class KeyboardView: UIView {
         }
     }
 
-    @objc private func keyTouchDown(_ sender: KeyButton) {
+    // MARK: - Touch Handling with Flick Detection
+
+    @objc private func keyTouchDown(_ sender: FlickKeyButton, event: UIEvent) {
         sender.backgroundColor = keyPressedColor
+        flickOriginButton = sender
+        flickFired = false
+
+        if let touch = event.touches(for: sender)?.first {
+            let point = touch.location(in: self)
+            flickStartPoint = point
+            flickStartTime = touch.timestamp
+        }
 
         if sender.kind == .backspace {
             delegate?.keyboardViewDidTapDelete(self)
@@ -200,9 +271,66 @@ class KeyboardView: UIView {
         }
     }
 
-    @objc private func keyTouchUp(_ sender: KeyButton) {
+    @objc private func keyTouchDrag(_ sender: FlickKeyButton, event: UIEvent) {
+        guard !flickFired, let touch = event.touches(for: sender)?.first else { return }
+
+        let point = touch.location(in: self)
+        let elapsed = touch.timestamp - flickStartTime
+
+        if elapsed > maxFlickDuration { return }
+
+        let dx = point.x - flickStartPoint.x
+        let dy = point.y - flickStartPoint.y
+        let distance = sqrt(dx * dx + dy * dy)
+
+        if distance > maxFlickDistance { return }
+
+        if distance >= minFlickDistance {
+            let direction = resolveDirection(dx: dx, dy: dy)
+            if direction != .none, let originButton = flickOriginButton {
+                if let text = flickChar(for: originButton, direction: direction) {
+                    flickFired = true
+                    stopBackspaceRepeat()
+                    delegate?.keyboardView(self, didTapText: text)
+                    if shiftState == .on { shiftState = .off }
+                    sender.backgroundColor = sender.normalBg
+                }
+            }
+        }
+    }
+
+    @objc private func keyTouchUp(_ sender: FlickKeyButton, event: UIEvent) {
         sender.backgroundColor = sender.normalBg
         stopBackspaceRepeat()
+
+        if flickFired {
+            flickOriginButton = nil
+            return
+        }
+
+        // Check for flick on release
+        if let touch = event.touches(for: sender)?.first, let originButton = flickOriginButton {
+            let point = touch.location(in: self)
+            let elapsed = touch.timestamp - flickStartTime
+            let dx = point.x - flickStartPoint.x
+            let dy = point.y - flickStartPoint.y
+            let distance = sqrt(dx * dx + dy * dy)
+
+            if distance >= minFlickDistance && distance <= maxFlickDistance && elapsed <= maxFlickDuration {
+                let direction = resolveDirection(dx: dx, dy: dy)
+                if direction != .none {
+                    if let text = flickChar(for: originButton, direction: direction) {
+                        delegate?.keyboardView(self, didTapText: text)
+                        if shiftState == .on { shiftState = .off }
+                        flickOriginButton = nil
+                        return
+                    }
+                }
+            }
+        }
+
+        // Regular tap
+        flickOriginButton = nil
 
         switch sender.kind {
         case .character:
@@ -221,9 +349,23 @@ class KeyboardView: UIView {
         }
     }
 
-    @objc private func keyTouchCancel(_ sender: KeyButton) {
+    @objc private func keyTouchCancel(_ sender: FlickKeyButton) {
         sender.backgroundColor = sender.normalBg
         stopBackspaceRepeat()
+        flickOriginButton = nil
+        flickFired = false
+    }
+
+    private func resolveDirection(dx: CGFloat, dy: CGFloat) -> FlickDirection {
+        let absDx = abs(dx)
+        let absDy = abs(dy)
+
+        if absDx > absDy * directionalityThreshold {
+            return dx > 0 ? .right : .left
+        } else if absDy > absDx * directionalityThreshold {
+            return dy > 0 ? .down : .up
+        }
+        return .none
     }
 
     private func stopBackspaceRepeat() {
@@ -234,11 +376,17 @@ class KeyboardView: UIView {
     }
 }
 
+// MARK: - Types
+
+enum FlickDirection {
+    case none, up, down, left, right
+}
+
 enum KeyKind {
     case character, shift, backspace, space, enter, symbolToggle
 }
 
-class KeyButton: UIControl {
+class FlickKeyButton: UIControl {
     var keyId: String = ""
     var label: String = ""
     var kind: KeyKind = .character
@@ -246,11 +394,15 @@ class KeyButton: UIControl {
     var normalBg: UIColor = .darkGray
     var pressedBg: UIColor = .gray
     var labelColor: UIColor = .white
+    var flickUpHint: String? = nil
+    var flickHintColor: UIColor = .gray
 
     private let titleLabel = UILabel()
+    private let hintLabel = UILabel()
 
     func configure() {
         backgroundColor = normalBg
+
         titleLabel.text = label
         titleLabel.textColor = labelColor
         titleLabel.font = isSpecial ? .systemFont(ofSize: 14) : .systemFont(ofSize: 22)
@@ -261,5 +413,19 @@ class KeyButton: UIControl {
             titleLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
             titleLabel.centerYAnchor.constraint(equalTo: centerYAnchor)
         ])
+
+        // Flick-up hint in top-right corner
+        if let hint = flickUpHint {
+            hintLabel.text = hint
+            hintLabel.textColor = flickHintColor
+            hintLabel.font = .systemFont(ofSize: 10)
+            hintLabel.textAlignment = .right
+            hintLabel.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(hintLabel)
+            NSLayoutConstraint.activate([
+                hintLabel.topAnchor.constraint(equalTo: topAnchor, constant: 2),
+                hintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4)
+            ])
+        }
     }
 }
