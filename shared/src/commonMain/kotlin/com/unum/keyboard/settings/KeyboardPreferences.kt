@@ -43,6 +43,21 @@ class KeyboardPreferences(private val settings: PlatformSettings) {
         get() = settings.getBoolean(KEY_GESTURE_TYPING, false)
         set(value) = settings.putBoolean(KEY_GESTURE_TYPING, value)
 
+    /** Enable clipboard history tracking. Default: ON */
+    var clipboardHistoryEnabled: Boolean
+        get() = settings.getBoolean(KEY_CLIPBOARD_HISTORY, true)
+        set(value) = settings.putBoolean(KEY_CLIPBOARD_HISTORY, value)
+
+    /** Serialized clipboard history data */
+    var clipboardData: String
+        get() = settings.getString(KEY_CLIPBOARD_DATA, "")
+        set(value) = settings.putString(KEY_CLIPBOARD_DATA, value)
+
+    /** Serialized slideboard snippets data */
+    var slideboardData: String
+        get() = settings.getString(KEY_SLIDEBOARD_DATA, "")
+        set(value) = settings.putString(KEY_SLIDEBOARD_DATA, value)
+
     companion object {
         private const val KEY_ENHANCED_PREDICTIONS = "enhanced_predictions"
         private const val KEY_SHOW_PREDICTIONS = "show_predictions"
@@ -51,5 +66,8 @@ class KeyboardPreferences(private val settings: PlatformSettings) {
         private const val KEY_HAPTIC_INTENSITY = "haptic_intensity"
         private const val KEY_SOUND_FEEDBACK = "sound_feedback"
         private const val KEY_GESTURE_TYPING = "gesture_typing"
+        private const val KEY_CLIPBOARD_HISTORY = "clipboard_history"
+        private const val KEY_CLIPBOARD_DATA = "clipboard_data"
+        private const val KEY_SLIDEBOARD_DATA = "slideboard_data"
     }
 }

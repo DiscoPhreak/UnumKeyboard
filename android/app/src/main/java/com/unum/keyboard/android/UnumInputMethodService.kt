@@ -1,11 +1,15 @@
 package com.unum.keyboard.android
 
+import android.content.ClipboardManager as AndroidClipboardManager
+import android.content.Context
 import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.widget.FrameLayout
 import android.widget.LinearLayout
+import com.unum.keyboard.android.ui.ClipboardPanel
 import com.unum.keyboard.android.ui.KeyboardView
 import com.unum.keyboard.android.ui.SuggestionBar
 import com.unum.keyboard.gesture.GestureCandidate
@@ -15,19 +19,46 @@ import com.unum.keyboard.prediction.TwoStagePipeline
 
 class UnumInputMethodService : InputMethodService(),
     KeyboardView.KeyboardActionListener,
-    SuggestionBar.SuggestionListener {
+    SuggestionBar.SuggestionListener,
+    ClipboardPanel.ClipboardPanelListener {
 
     private var keyboardView: KeyboardView? = null
     private var suggestionBar: SuggestionBar? = null
+    private var clipboardPanel: ClipboardPanel? = null
     private val predictionService = PredictionService()
     private var pipeline: TwoStagePipeline? = null
     private val currentWord = StringBuilder()
     private val contextWords = mutableListOf<String>()
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // System clipboard listener
+    private var systemClipboard: AndroidClipboardManager? = null
+    private val clipboardListener = AndroidClipboardManager.OnPrimaryClipChangedListener {
+        onSystemClipboardChanged()
+    }
+
     override fun onCreate() {
         super.onCreate()
         loadDictionary()
+        setupSystemClipboardListener()
+    }
+
+    private fun setupSystemClipboardListener() {
+        systemClipboard = getSystemService(Context.CLIPBOARD_SERVICE) as? AndroidClipboardManager
+        systemClipboard?.addPrimaryClipChangedListener(clipboardListener)
+    }
+
+    private fun onSystemClipboardChanged() {
+        val clip = systemClipboard?.primaryClip ?: return
+        if (clip.itemCount > 0) {
+            val text = clip.getItemAt(0).text?.toString() ?: return
+            if (text.isNotBlank()) {
+                clipboardPanel?.getClipboardManager()?.addClip(
+                    text, System.currentTimeMillis()
+                )
+                saveClipboardData()
+            }
+        }
     }
 
     private fun loadDictionary() {
@@ -37,8 +68,6 @@ class UnumInputMethodService : InputMethodService(),
             val trigrams = assets.open("en-US/trigrams.txt").bufferedReader().readText()
             predictionService.initialize(unigrams, bigrams, trigrams)
 
-            // Initialize two-stage pipeline
-            // Uses StubNeuralReranker until a real ONNX model is available
             val enhancedPredictions = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
                 .getBoolean("enhanced_predictions", true)
 
@@ -60,11 +89,16 @@ class UnumInputMethodService : InputMethodService(),
     }
 
     override fun onDestroy() {
+        systemClipboard?.removePrimaryClipChangedListener(clipboardListener)
+        saveClipboardData()
         pipeline?.destroy()
         super.onDestroy()
     }
 
     override fun onCreateInputView(): View {
+        // Use FrameLayout as root so clipboard panel can overlay the keyboard
+        val rootFrame = FrameLayout(this)
+
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
@@ -76,7 +110,6 @@ class UnumInputMethodService : InputMethodService(),
 
         keyboardView = KeyboardView(this).also {
             it.listener = this
-            // Enable gesture typing and provide dictionary
             val gestureEnabled = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
                 .getBoolean("gesture_typing", false)
             it.gestureTypingEnabled = gestureEnabled
@@ -84,7 +117,22 @@ class UnumInputMethodService : InputMethodService(),
             container.addView(it)
         }
 
-        return container
+        rootFrame.addView(container)
+
+        // Clipboard panel overlays on top
+        clipboardPanel = ClipboardPanel(this).also {
+            it.listener = this
+            it.layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            rootFrame.addView(it)
+        }
+
+        // Restore saved clipboard data
+        loadClipboardData()
+
+        return rootFrame
     }
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
@@ -119,7 +167,6 @@ class UnumInputMethodService : InputMethodService(),
         } else {
             currentWord.append(text)
             pipeline?.onKeystroke(currentWord.toString(), contextWords)
-            // Update hit target resolver with current prefix
             keyboardView?.currentPrefix = currentWord.toString()
         }
     }
@@ -166,10 +213,8 @@ class UnumInputMethodService : InputMethodService(),
     }
 
     override fun onGestureWord(candidates: List<GestureCandidate>) {
-        // Show alternative gesture candidates in the suggestion bar
         if (candidates.isNotEmpty()) {
             suggestionBar?.updateSuggestions(candidates.map { it.word })
-            // Track the gesture word as the current word for replacement
             val topWord = candidates[0].word
             contextWords.add(topWord)
             if (contextWords.size > 5) contextWords.removeAt(0)
@@ -192,5 +237,55 @@ class UnumInputMethodService : InputMethodService(),
         pipeline?.onWordCommitted(word)
         currentWord.clear()
         keyboardView?.currentPrefix = ""
+    }
+
+    // ---- ClipboardPanel callbacks ----
+
+    override fun onClipSelected(text: String) {
+        val ic = currentInputConnection ?: return
+        ic.commitText(text, 1)
+        clipboardPanel?.hide()
+    }
+
+    override fun onSnippetSelected(text: String) {
+        val ic = currentInputConnection ?: return
+        ic.commitText(text, 1)
+        clipboardPanel?.hide()
+    }
+
+    override fun onClipboardPanelClosed() {
+        saveClipboardData()
+    }
+
+    /**
+     * Toggle the clipboard panel visibility.
+     * Called from a future clipboard button on the keyboard toolbar.
+     */
+    fun toggleClipboardPanel() {
+        val panel = clipboardPanel ?: return
+        if (panel.isShowing) {
+            panel.hide()
+        } else {
+            panel.show()
+        }
+    }
+
+    // ---- Persistence ----
+
+    private fun loadClipboardData() {
+        val prefs = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
+        val clipData = prefs.getString("clipboard_data", "") ?: ""
+        val snippetData = prefs.getString("slideboard_data", "") ?: ""
+
+        clipboardPanel?.getClipboardManager()?.deserialize(clipData)
+        clipboardPanel?.getSlideboardManager()?.deserialize(snippetData)
+    }
+
+    private fun saveClipboardData() {
+        val prefs = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
+        prefs.edit()
+            .putString("clipboard_data", clipboardPanel?.getClipboardManager()?.serialize() ?: "")
+            .putString("slideboard_data", clipboardPanel?.getSlideboardManager()?.serialize() ?: "")
+            .apply()
     }
 }
