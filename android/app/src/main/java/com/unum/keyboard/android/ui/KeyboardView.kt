@@ -13,6 +13,8 @@ import android.view.MotionEvent
 import android.view.View
 import com.unum.keyboard.core.KeyAction
 import com.unum.keyboard.core.KeyboardState
+import com.unum.keyboard.hittarget.DynamicHitTargetResolver
+import com.unum.keyboard.hittarget.TouchCalibrator
 import com.unum.keyboard.layout.KeyGeometry
 import com.unum.keyboard.layout.KeyType
 import com.unum.keyboard.layout.LayoutEngine
@@ -34,6 +36,22 @@ class KeyboardView @JvmOverloads constructor(
     private val keyboardState = KeyboardState()
     private val layoutEngine = LayoutEngine()
     private var computedLayout: LayoutEngine.ComputedLayout? = null
+
+    // Dynamic hit target resolution (M6)
+    private val hitTargetResolver = DynamicHitTargetResolver()
+
+    /** Current word prefix — set by the IME to inform hit target predictions */
+    var currentPrefix: String = ""
+
+    /**
+     * Resolve which key was tapped using Bayesian hit target resolution.
+     * Falls back to simple point-in-rect if no layout is computed.
+     */
+    private fun resolveKey(x: Float, y: Float): KeyGeometry? {
+        val layout = computedLayout ?: return null
+        return hitTargetResolver.resolve(x, y, layout.keys, currentPrefix)
+            ?: layout.findKeyAt(x, y) // fallback for edge cases
+    }
 
     // Paint objects
     private val keyBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -139,7 +157,7 @@ class KeyboardView @JvmOverloads constructor(
 
         when (event.action) {
             MotionEvent.ACTION_DOWN -> {
-                val geo = layout.findKeyAt(event.x, event.y)
+                val geo = resolveKey(event.x, event.y)
                 if (geo != null) {
                     pressedKeyId = geo.key.id
                     performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -159,8 +177,10 @@ class KeyboardView @JvmOverloads constructor(
                 handler.removeCallbacks(backspaceRepeatRunnable)
 
                 if (event.action == MotionEvent.ACTION_UP) {
-                    val geo = layout.findKeyAt(event.x, event.y)
+                    val geo = resolveKey(event.x, event.y)
                     if (geo != null) {
+                        // Record touch for calibration learning
+                        hitTargetResolver.calibrator.recordTouch(event.x, event.y, geo)
                         handleKeyPress(geo)
                     }
                 }
@@ -170,10 +190,10 @@ class KeyboardView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                val geo = layout.findKeyAt(event.x, event.y)
+                val geo = resolveKey(event.x, event.y)
                 val newId = geo?.key?.id
                 if (newId != pressedKeyId) {
-                    if (pressedKeyId == "backspace" || pressedKeyId == "backspace") {
+                    if (pressedKeyId == "backspace") {
                         isBackspaceHeld = false
                         handler.removeCallbacks(backspaceRepeatRunnable)
                     }

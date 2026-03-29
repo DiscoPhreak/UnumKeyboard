@@ -99,18 +99,22 @@ class UnumInputMethodService : InputMethodService(),
                 if (contextWords.size > 5) contextWords.removeAt(0)
                 pipeline?.onWordCommitted(word)
                 currentWord.clear()
+                keyboardView?.currentPrefix = ""
             }
         } else if (text == "." || text == "!" || text == "?" || text == "\n") {
             if (currentWord.isNotEmpty()) {
                 val word = currentWord.toString()
                 pipeline?.onWordCommitted(word)
                 currentWord.clear()
+                keyboardView?.currentPrefix = ""
             }
             contextWords.clear()
             pipeline?.onSentenceBoundary()
         } else {
             currentWord.append(text)
             pipeline?.onKeystroke(currentWord.toString(), contextWords)
+            // Update hit target resolver with current prefix
+            keyboardView?.currentPrefix = currentWord.toString()
         }
     }
 
@@ -123,6 +127,7 @@ class UnumInputMethodService : InputMethodService(),
         }
 
         pipeline?.onKeystroke(currentWord.toString(), contextWords)
+        keyboardView?.currentPrefix = currentWord.toString()
     }
 
     override fun onEnter() {
@@ -166,5 +171,6 @@ class UnumInputMethodService : InputMethodService(),
         if (contextWords.size > 5) contextWords.removeAt(0)
         pipeline?.onWordCommitted(word)
         currentWord.clear()
+        keyboardView?.currentPrefix = ""
     }
 }
