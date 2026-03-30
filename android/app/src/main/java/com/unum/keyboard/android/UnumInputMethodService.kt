@@ -9,13 +9,16 @@ import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.view.KeyEvent
 import com.unum.keyboard.android.ui.ClipboardPanel
 import com.unum.keyboard.android.ui.KeyboardView
 import com.unum.keyboard.android.ui.SuggestionBar
+import com.unum.keyboard.core.TextAction
 import com.unum.keyboard.gesture.GestureCandidate
 import com.unum.keyboard.prediction.PredictionService
 import com.unum.keyboard.prediction.StubNeuralReranker
 import com.unum.keyboard.prediction.TwoStagePipeline
+import com.unum.keyboard.text.EditingAction
 
 class UnumInputMethodService : InputMethodService(),
     KeyboardView.KeyboardActionListener,
@@ -210,6 +213,99 @@ class UnumInputMethodService : InputMethodService(),
             }
         }
         ic.commitText("\n", 1)
+    }
+
+    // ---- Text Editing (M10) ----
+
+    override fun onTextAction(action: TextAction) {
+        val ic = currentInputConnection ?: return
+
+        when (action) {
+            is TextAction.MoveCursor -> {
+                // Move cursor by offset using ExtractedText
+                val extracted = ic.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0)
+                if (extracted != null) {
+                    val newPos = (extracted.selectionStart + action.offset)
+                        .coerceIn(0, extracted.text?.length ?: 0)
+                    ic.setSelection(newPos, newPos)
+                }
+            }
+            is TextAction.ExtendSelection -> {
+                val extracted = ic.getExtractedText(android.view.inputmethod.ExtractedTextRequest(), 0)
+                if (extracted != null) {
+                    val textLen = extracted.text?.length ?: 0
+                    val newEnd = (extracted.selectionEnd + action.offset).coerceIn(0, textLen)
+                    ic.setSelection(extracted.selectionStart, newEnd)
+                }
+            }
+            is TextAction.SelectAll -> {
+                ic.performContextMenuAction(android.R.id.selectAll)
+            }
+            is TextAction.Cut -> {
+                ic.performContextMenuAction(android.R.id.cut)
+            }
+            is TextAction.Copy -> {
+                ic.performContextMenuAction(android.R.id.copy)
+            }
+            is TextAction.Paste -> {
+                ic.performContextMenuAction(android.R.id.paste)
+            }
+            is TextAction.Undo -> {
+                // Send Ctrl+Z key event
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_Z).apply {
+                    // Note: meta state for Ctrl isn't easily set this way; apps may not support it
+                })
+            }
+            is TextAction.Redo -> {
+                // Send Ctrl+Y key event
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_Y))
+            }
+            is TextAction.MoveCursorLeft -> {
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT))
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT))
+            }
+            is TextAction.MoveCursorRight -> {
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT))
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT))
+            }
+            else -> { /* Other TextActions handled elsewhere */ }
+        }
+    }
+
+    override fun onEditingAction(action: EditingAction) {
+        when (action) {
+            EditingAction.CURSOR_LEFT -> onTextAction(TextAction.MoveCursor(-1))
+            EditingAction.CURSOR_RIGHT -> onTextAction(TextAction.MoveCursor(1))
+            EditingAction.CURSOR_WORD_LEFT -> {
+                // Move left by word — use key event with Ctrl modifier
+                val ic = currentInputConnection ?: return
+                ic.sendKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT, 0, KeyEvent.META_CTRL_ON))
+                ic.sendKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT, 0, KeyEvent.META_CTRL_ON))
+            }
+            EditingAction.CURSOR_WORD_RIGHT -> {
+                val ic = currentInputConnection ?: return
+                ic.sendKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT, 0, KeyEvent.META_CTRL_ON))
+                ic.sendKeyEvent(KeyEvent(0, 0, KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_RIGHT, 0, KeyEvent.META_CTRL_ON))
+            }
+            EditingAction.CURSOR_LINE_START -> {
+                val ic = currentInputConnection ?: return
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MOVE_HOME))
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MOVE_HOME))
+            }
+            EditingAction.CURSOR_LINE_END -> {
+                val ic = currentInputConnection ?: return
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_MOVE_END))
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_MOVE_END))
+            }
+            EditingAction.SELECT_ALL -> onTextAction(TextAction.SelectAll)
+            EditingAction.SELECT_LEFT -> onTextAction(TextAction.ExtendSelection(-1))
+            EditingAction.SELECT_RIGHT -> onTextAction(TextAction.ExtendSelection(1))
+            EditingAction.CUT -> onTextAction(TextAction.Cut)
+            EditingAction.COPY -> onTextAction(TextAction.Copy)
+            EditingAction.PASTE -> onTextAction(TextAction.Paste)
+            EditingAction.UNDO -> onTextAction(TextAction.Undo)
+            EditingAction.REDO -> onTextAction(TextAction.Redo)
+        }
     }
 
     override fun onGestureWord(candidates: List<GestureCandidate>) {

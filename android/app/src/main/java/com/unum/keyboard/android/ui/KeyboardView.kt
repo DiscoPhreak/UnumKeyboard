@@ -14,6 +14,7 @@ import android.view.View
 import android.graphics.Path
 import com.unum.keyboard.core.KeyAction
 import com.unum.keyboard.core.KeyboardState
+import com.unum.keyboard.core.TextAction
 import com.unum.keyboard.gesture.FlickGestureDetector
 import com.unum.keyboard.gesture.GestureCandidate
 import com.unum.keyboard.gesture.GestureDecoder
@@ -25,6 +26,8 @@ import com.unum.keyboard.layout.KeyGeometry
 import com.unum.keyboard.layout.KeyType
 import com.unum.keyboard.layout.LayoutEngine
 import com.unum.keyboard.prediction.TrieDictionary
+import com.unum.keyboard.text.CursorController
+import com.unum.keyboard.text.EditingAction
 
 class KeyboardView @JvmOverloads constructor(
     context: Context,
@@ -38,6 +41,10 @@ class KeyboardView @JvmOverloads constructor(
         fun onEnter()
         /** Called when gesture typing produces word candidates */
         fun onGestureWord(candidates: List<GestureCandidate>) {}
+        /** Called when a text editing action is triggered (M10) */
+        fun onTextAction(action: TextAction) {}
+        /** Called when an editing toolbar action is triggered (M10) */
+        fun onEditingAction(action: EditingAction) {}
     }
 
     var listener: KeyboardActionListener? = null
@@ -58,6 +65,10 @@ class KeyboardView @JvmOverloads constructor(
 
     // Gesture typing (M8)
     private val gestureTracker = GesturePathTracker()
+
+    // Spacebar trackpad cursor control (M10)
+    private val cursorController = CursorController()
+    private var isSpacebarTrackpadActive = false
     private var gestureDecoder: GestureDecoder? = null
     private var isGesturing: Boolean = false
     private val gesturePath = Path()  // Android graphics path for drawing the swipe trail
@@ -108,6 +119,10 @@ class KeyboardView @JvmOverloads constructor(
         style = Paint.Style.STROKE
         strokeCap = Paint.Cap.ROUND
         strokeJoin = Paint.Join.ROUND
+    }
+    private val trackpadActivePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = TRACKPAD_ACTIVE_COLOR
+        style = Paint.Style.FILL
     }
 
     private var pressedKeyId: String? = null
@@ -194,6 +209,20 @@ class KeyboardView @JvmOverloads constructor(
         if (isGesturing && !gesturePath.isEmpty) {
             canvas.drawPath(gesturePath, gestureTrailPaint)
         }
+
+        // Draw trackpad active indicator on spacebar
+        if (isSpacebarTrackpadActive) {
+            val spaceGeo = layout.keys.find { it.key.type == KeyType.SPACE }
+            if (spaceGeo != null) {
+                val rect = RectF(spaceGeo.bounds.left, spaceGeo.bounds.top,
+                    spaceGeo.bounds.right, spaceGeo.bounds.bottom)
+                canvas.drawRoundRect(rect, cornerRadius, cornerRadius, trackpadActivePaint)
+                val label = if (cursorController.isSelecting) "SELECT" else "TRACKPAD"
+                val labelPaint = specialTextPaint
+                val ty = spaceGeo.center.y - (labelPaint.descent() + labelPaint.ascent()) / 2f
+                canvas.drawText(label, spaceGeo.center.x, ty, labelPaint)
+            }
+        }
     }
 
     private fun getKeyLabel(geo: KeyGeometry): String {
@@ -228,6 +257,11 @@ class KeyboardView @JvmOverloads constructor(
                         isGesturing = false // not yet — becomes true after crossing 2+ keys
                     }
 
+                    // Start cursor controller tracking on spacebar (M10)
+                    if (geo.key.type == KeyType.SPACE) {
+                        cursorController.onTouchStart(event.x, event.y, timestamp)
+                    }
+
                     performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
 
                     if (geo.key.type == KeyType.BACKSPACE) {
@@ -241,6 +275,26 @@ class KeyboardView @JvmOverloads constructor(
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                // Spacebar trackpad cursor control (M10)
+                if (pressedKeyId == "space") {
+                    val consumed = cursorController.onTouchMove(event.x, event.y, timestamp)
+                    if (consumed) {
+                        if (!isSpacebarTrackpadActive) {
+                            isSpacebarTrackpadActive = true
+                            // Cancel gesture/flick tracking
+                            flickDetector.cancel()
+                            gestureTracker.reset()
+                            performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                        }
+                        // Dispatch pending cursor actions
+                        for (action in cursorController.drainActions()) {
+                            listener?.onTextAction(action)
+                        }
+                        invalidate()
+                        return true
+                    }
+                }
+
                 // Gesture typing mode: track the swipe path
                 if (gestureTracker.isActive) {
                     gestureTracker.addPoint(event.x, event.y, timestamp)
@@ -308,6 +362,17 @@ class KeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 isBackspaceHeld = false
                 handler.removeCallbacks(backspaceRepeatRunnable)
+
+                // Handle spacebar trackpad end (M10)
+                if (isSpacebarTrackpadActive) {
+                    cursorController.onTouchEnd(event.x, event.y, timestamp)
+                    isSpacebarTrackpadActive = false
+                    pressedKeyId = null
+                    flickOriginKey = null
+                    invalidate()
+                    return true
+                }
+                cursorController.cancel()
 
                 if (event.action == MotionEvent.ACTION_UP) {
                     // Check if we were gesture typing
@@ -425,6 +490,7 @@ class KeyboardView @JvmOverloads constructor(
 
         private const val FLICK_HINT_COLOR = 0xFF666666.toInt()  // Subtle gray hints
         private const val GESTURE_TRAIL_COLOR = 0x80FFFFFF.toInt() // Semi-transparent white trail
+        private const val TRACKPAD_ACTIVE_COLOR = 0xFF0D47A1.toInt() // Blue tint when trackpad active
         private const val KEYBOARD_HEIGHT_DP = 260f
         private const val HORIZONTAL_PADDING = 3f  // dp
         private const val VERTICAL_PADDING = 6f    // dp

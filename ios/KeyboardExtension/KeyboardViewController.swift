@@ -99,6 +99,18 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
         }
     }
 
+    func keyboardView(_ view: KeyboardView, didMoveCursor offset: Int) {
+        textDocumentProxy.adjustTextPosition(byCharacterOffset: offset)
+    }
+
+    func keyboardView(_ view: KeyboardView, didExtendSelection offset: Int) {
+        // UITextDocumentProxy doesn't have direct selection extension API.
+        // We use adjustTextPosition which moves the cursor — for selection,
+        // apps would need the full UITextInput protocol. This is the best
+        // approximation available in a keyboard extension.
+        textDocumentProxy.adjustTextPosition(byCharacterOffset: offset)
+    }
+
     // MARK: - SuggestionBarDelegate
 
     func suggestionBar(_ bar: SuggestionBar, didSelectSuggestion word: String) {

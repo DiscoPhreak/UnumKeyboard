@@ -8,6 +8,10 @@ protocol KeyboardViewDelegate: AnyObject {
     func keyboardViewDidTapSymbolToggle(_ view: KeyboardView, keyId: String)
     /// Called when gesture typing produces a word
     func keyboardView(_ view: KeyboardView, didGestureWord word: String, alternatives: [String])
+    /// Called when trackpad cursor movement occurs (M10)
+    func keyboardView(_ view: KeyboardView, didMoveCursor offset: Int)
+    /// Called when trackpad selection extends (M10)
+    func keyboardView(_ view: KeyboardView, didExtendSelection offset: Int)
 }
 
 class KeyboardView: UIView {
@@ -55,6 +59,16 @@ class KeyboardView: UIView {
 
     // Gesture typing (M8)
     var gestureTypingEnabled: Bool = false
+
+    // Spacebar trackpad (M10)
+    private var spacebarTrackpadActive: Bool = false
+    private var spacebarTouchStart: CGPoint = .zero
+    private var spacebarTouchTime: TimeInterval = 0
+    private var lastTrackpadCursorOffset: Int = 0
+    private let trackpadActivationDelay: TimeInterval = 0.3
+    private let trackpadSensitivity: CGFloat = 15
+    private let trackpadSelectionThreshold: CGFloat = 30
+    private var trackpadSelecting: Bool = false
     private var isGesturing: Bool = false
     private var gestureKeySequence: [String] = []
     private var lastGestureKeyId: String? = nil
@@ -290,6 +304,15 @@ class KeyboardView: UIView {
             }
         }
 
+        // Start spacebar trackpad tracking (M10)
+        if sender.kind == .space, let touch = event.touches(for: sender)?.first {
+            spacebarTouchStart = touch.location(in: self)
+            spacebarTouchTime = touch.timestamp
+            spacebarTrackpadActive = false
+            lastTrackpadCursorOffset = 0
+            trackpadSelecting = false
+        }
+
         if sender.kind == .backspace {
             delegate?.keyboardViewDidTapDelete(self)
             backspaceDelayTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: false) { [weak self] _ in
@@ -306,6 +329,36 @@ class KeyboardView: UIView {
 
         let point = touch.location(in: self)
         let elapsed = touch.timestamp - flickStartTime
+
+        // Spacebar trackpad (M10)
+        if sender.kind == .space {
+            let trackpadElapsed = touch.timestamp - spacebarTouchTime
+            if trackpadElapsed >= trackpadActivationDelay {
+                if !spacebarTrackpadActive {
+                    spacebarTrackpadActive = true
+                    spacebarTouchStart = point
+                    lastTrackpadCursorOffset = 0
+                }
+                let dx = point.x - spacebarTouchStart.x
+                let dy = point.y - spacebarTouchStart.y
+                let cursorOffset = Int(round(dx / trackpadSensitivity))
+                let delta = cursorOffset - lastTrackpadCursorOffset
+
+                if abs(dy) > trackpadSelectionThreshold && !trackpadSelecting {
+                    trackpadSelecting = true
+                }
+
+                if delta != 0 {
+                    if trackpadSelecting {
+                        delegate?.keyboardView(self, didExtendSelection: delta)
+                    } else {
+                        delegate?.keyboardView(self, didMoveCursor: delta)
+                    }
+                    lastTrackpadCursorOffset = cursorOffset
+                }
+                return
+            }
+        }
 
         // Gesture typing: track path across keys
         if gestureTypingEnabled && !gestureKeySequence.isEmpty {
@@ -357,6 +410,17 @@ class KeyboardView: UIView {
     @objc private func keyTouchUp(_ sender: FlickKeyButton, event: UIEvent) {
         sender.backgroundColor = sender.normalBg
         stopBackspaceRepeat()
+
+        // Spacebar trackpad: suppress space input if trackpad was active (M10)
+        if sender.kind == .space && spacebarTrackpadActive {
+            spacebarTrackpadActive = false
+            trackpadSelecting = false
+            lastTrackpadCursorOffset = 0
+            flickOriginButton = nil
+            return
+        }
+        spacebarTrackpadActive = false
+        trackpadSelecting = false
 
         // Handle gesture typing completion
         if isGesturing && gestureKeySequence.count >= 2 {
