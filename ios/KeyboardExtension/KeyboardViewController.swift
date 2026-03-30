@@ -5,9 +5,11 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
     private var keyboardView: KeyboardView!
     private var suggestionBar: SuggestionBar!
     private var currentWord = ""
+    private var previousWord = ""
 
     // Prediction will be powered by the shared KMP framework once the Xcode
-    // project links the XCFramework. For now the suggestion bar UI is ready.
+    // project links the XCFramework. Learning data will be persisted via
+    // UserDefaults once the shared KMP framework is linked.
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -43,9 +45,17 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
         textDocumentProxy.insertText(text)
 
         if text == " " {
+            if !currentWord.isEmpty {
+                previousWord = currentWord
+                // Learning: word committed (will call shared KMP once linked)
+            }
             currentWord = ""
         } else if text == "." || text == "!" || text == "?" {
+            if !currentWord.isEmpty {
+                previousWord = currentWord
+            }
             currentWord = ""
+            previousWord = "" // sentence boundary
         } else {
             currentWord += text
         }
@@ -119,6 +129,8 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
             textDocumentProxy.deleteBackward()
         }
         textDocumentProxy.insertText(word + " ")
+        previousWord = word
         currentWord = ""
+        // Learning: suggestion accepted (will call shared KMP once linked)
     }
 }

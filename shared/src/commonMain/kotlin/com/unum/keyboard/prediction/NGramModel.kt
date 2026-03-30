@@ -55,13 +55,14 @@ class NGramModel {
     /**
      * Score a candidate word given context.
      *
-     * score = w1*unigram + w2*P(word|prev) + w3*P(word|prev2,prev)
+     * score = w1*unigram + w2*P(word|prev) + w3*P(word|prev2,prev) + w4*userFreq
      */
     fun scoreCandidate(
         candidate: WordCandidate,
         prevWordId: Int,
         prev2WordId: Int,
-        maxUnigramFreq: Int
+        maxUnigramFreq: Int,
+        userFrequencyScore: Float = 0f
     ): Float {
         val unigramScore = if (maxUnigramFreq > 0) {
             candidate.frequency.toFloat() / maxUnigramFreq
@@ -78,7 +79,8 @@ class NGramModel {
 
         return UNIGRAM_WEIGHT * unigramScore +
                BIGRAM_WEIGHT * bigramScore +
-               TRIGRAM_WEIGHT * trigramScore
+               TRIGRAM_WEIGHT * trigramScore +
+               USER_FREQUENCY_WEIGHT * userFrequencyScore
     }
 
     /**
@@ -119,6 +121,6 @@ class NGramModel {
         const val UNIGRAM_WEIGHT = 0.1f
         const val BIGRAM_WEIGHT = 0.3f
         const val TRIGRAM_WEIGHT = 0.4f
-        // Remaining 0.2 reserved for user frequency (M11)
+        const val USER_FREQUENCY_WEIGHT = 0.2f
     }
 }

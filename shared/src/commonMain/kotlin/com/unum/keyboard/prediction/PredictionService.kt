@@ -1,5 +1,7 @@
 package com.unum.keyboard.prediction
 
+import com.unum.keyboard.stats.LearningManager
+
 /**
  * High-level prediction service that manages the prediction engine lifecycle
  * and provides a simple API for the keyboard UI.
@@ -11,6 +13,10 @@ class PredictionService {
     private var ngramModel: NGramModel? = null
     private var autoCorrect: AutoCorrect? = null
     private var engine: PredictionEngine? = null
+
+    /** User learning manager — exposed for IME to call onWordCommitted */
+    var learningManager: LearningManager? = null
+        private set
 
     var isLoaded: Boolean = false
         private set
@@ -60,17 +66,28 @@ class PredictionService {
         }
         pe.setMaxUnigramFreq(maxFreq)
 
+        // Initialize user learning
+        val lm = LearningManager(dict)
+        pe.learningScorer = LearningManagerScorer(lm)
+
         dictionary = dict
         ngramModel = ngram
         autoCorrect = ac
         engine = pe
+        learningManager = lm
         isLoaded = true
     }
 
     /**
      * Get predictions for the current typing state.
+     * @param currentTime current time in millis for user frequency recency scoring
      */
-    fun predict(maxResults: Int = 3): List<Prediction> {
+    fun predict(maxResults: Int = 3, currentTime: Long = 0L): List<Prediction> {
+        // Update scorer time before prediction
+        val scorer = engine?.learningScorer
+        if (scorer is LearningManagerScorer) {
+            scorer.currentTime = currentTime
+        }
         return engine?.predict(maxResults) ?: emptyList()
     }
 
@@ -93,5 +110,46 @@ class PredictionService {
      */
     fun resetContext() {
         engine?.resetContext()
+        learningManager?.onSentenceBoundary()
     }
+
+    /**
+     * Record that a word was committed by the user (for learning).
+     */
+    fun learnWord(word: String, timestamp: Long) {
+        learningManager?.onWordCommitted(word, timestamp)
+    }
+
+    /**
+     * Load persisted learning data.
+     */
+    fun loadLearningData(data: String) {
+        learningManager?.deserialize(data)
+    }
+
+    /**
+     * Serialize learning data for persistence.
+     */
+    fun saveLearningData(): String {
+        return learningManager?.serialize() ?: ""
+    }
+}
+
+/**
+ * Adapts LearningManager to the LearningScorer interface used by PredictionEngine.
+ * The currentTime is set by the platform layer before each prediction cycle.
+ */
+private class LearningManagerScorer(
+    private val manager: LearningManager
+) : LearningScorer {
+    var currentTime: Long = 0L
+
+    override fun getUserFrequencyScore(word: String): Float =
+        manager.getUserScore(word, currentTime)
+
+    override fun getUserBigramScore(prevWord: String, word: String): Float =
+        manager.getUserBigramScore(prevWord, word)
+
+    override fun getUserContinuations(prevWord: String, maxResults: Int): List<Pair<String, Int>> =
+        manager.getUserContinuations(prevWord, maxResults)
 }

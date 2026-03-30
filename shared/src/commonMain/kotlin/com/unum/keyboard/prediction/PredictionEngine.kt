@@ -19,6 +19,9 @@ class PredictionEngine(
     private var currentPrefix: String = ""
     private var maxUnigramFreq: Int = 1
 
+    /** User learning integration (set by PredictionService when learning is enabled) */
+    var learningScorer: LearningScorer? = null
+
     fun setMaxUnigramFreq(freq: Int) {
         maxUnigramFreq = maxOf(freq, 1)
     }
@@ -74,17 +77,39 @@ class PredictionEngine(
         prev2WordId: Int,
         maxResults: Int
     ): List<Prediction> {
-        if (prevWordId < 0) return emptyList()
+        val results = mutableListOf<Prediction>()
 
-        val bigramContinuations = ngramModel.getBigramContinuations(prevWordId, maxResults * 2)
-        return bigramContinuations.mapNotNull { (wordId, _) ->
-            val word = dictionary.getWordById(wordId) ?: return@mapNotNull null
-            val freq = dictionary.getFrequency(word)
-            val candidate = WordCandidate(word, freq, wordId)
-            val score = ngramModel.scoreCandidate(candidate, prevWordId, prev2WordId, maxUnigramFreq)
-            Prediction(word, score, PredictionSource.NGRAM)
-        }.sortedByDescending { it.score }
-            .take(maxResults)
+        // System bigram continuations
+        if (prevWordId >= 0) {
+            val bigramContinuations = ngramModel.getBigramContinuations(prevWordId, maxResults * 2)
+            for ((wordId, _) in bigramContinuations) {
+                val word = dictionary.getWordById(wordId) ?: continue
+                val freq = dictionary.getFrequency(word)
+                val candidate = WordCandidate(word, freq, wordId)
+                val userScore = learningScorer?.getUserFrequencyScore(word) ?: 0f
+                val score = ngramModel.scoreCandidate(candidate, prevWordId, prev2WordId, maxUnigramFreq, userScore)
+                results.add(Prediction(word, score, PredictionSource.NGRAM))
+            }
+        }
+
+        // User bigram continuations (may suggest words not in system bigrams)
+        val prevWord = if (contextWords.isNotEmpty()) contextWords.last() else null
+        if (prevWord != null) {
+            val userContinuations = learningScorer?.getUserContinuations(prevWord, maxResults) ?: emptyList()
+            for ((word, _) in userContinuations) {
+                if (results.any { it.word == word }) continue
+                val freq = dictionary.getFrequency(word)
+                if (freq <= 0) continue // only suggest dictionary words
+                val wordId = dictionary.getWordId(word)
+                val candidate = WordCandidate(word, freq, wordId)
+                val userScore = learningScorer?.getUserFrequencyScore(word) ?: 0f
+                val score = ngramModel.scoreCandidate(candidate, prevWordId, prev2WordId, maxUnigramFreq, userScore)
+                results.add(Prediction(word, score + USER_BIGRAM_BOOST, PredictionSource.USER_DICTIONARY))
+            }
+        }
+
+        results.sortByDescending { it.score }
+        return results.take(maxResults)
     }
 
     private fun predictCompletion(
@@ -98,7 +123,8 @@ class PredictionEngine(
         // 1. Trie prefix search
         val trieCandidates = dictionary.prefixSearch(prefix, maxResults * 2)
         for (candidate in trieCandidates) {
-            val score = ngramModel.scoreCandidate(candidate, prevWordId, prev2WordId, maxUnigramFreq)
+            val userScore = learningScorer?.getUserFrequencyScore(candidate.word) ?: 0f
+            val score = ngramModel.scoreCandidate(candidate, prevWordId, prev2WordId, maxUnigramFreq, userScore)
             val boostedScore = score + (candidate.frequency.toFloat() / maxUnigramFreq) * 0.1f
             results.add(Prediction(candidate.word, boostedScore, PredictionSource.TRIE))
         }
@@ -110,8 +136,8 @@ class PredictionEngine(
                 if (results.any { it.word == correction.word }) continue
                 val wordId = dictionary.getWordId(correction.word)
                 val candidate = WordCandidate(correction.word, correction.frequency, wordId)
-                val score = ngramModel.scoreCandidate(candidate, prevWordId, prev2WordId, maxUnigramFreq)
-                // Penalize corrections by edit distance
+                val userScore = learningScorer?.getUserFrequencyScore(correction.word) ?: 0f
+                val score = ngramModel.scoreCandidate(candidate, prevWordId, prev2WordId, maxUnigramFreq, userScore)
                 val correctionPenalty = correction.weightedCost * 0.1f
                 results.add(Prediction(
                     correction.word,
@@ -143,7 +169,18 @@ class PredictionEngine(
     companion object {
         private const val MAX_CONTEXT_WORDS = 5
         private const val EXACT_MATCH_BOOST = 0.2f
+        private const val USER_BIGRAM_BOOST = 0.15f
     }
+}
+
+/**
+ * Interface for providing user learning scores to the prediction engine.
+ * Implemented by LearningManager to decouple prediction from learning storage.
+ */
+interface LearningScorer {
+    fun getUserFrequencyScore(word: String): Float
+    fun getUserBigramScore(prevWord: String, word: String): Float
+    fun getUserContinuations(prevWord: String, maxResults: Int): List<Pair<String, Int>>
 }
 
 data class Prediction(

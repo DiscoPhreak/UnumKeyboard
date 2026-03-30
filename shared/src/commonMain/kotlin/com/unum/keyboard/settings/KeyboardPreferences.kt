@@ -58,6 +58,16 @@ class KeyboardPreferences(private val settings: PlatformSettings) {
         get() = settings.getString(KEY_SLIDEBOARD_DATA, "")
         set(value) = settings.putString(KEY_SLIDEBOARD_DATA, value)
 
+    /** Enable user learning (frequency, bigrams, auto-dictionary). Default: ON */
+    var learningEnabled: Boolean
+        get() = settings.getBoolean(KEY_LEARNING_ENABLED, true)
+        set(value) = settings.putBoolean(KEY_LEARNING_ENABLED, value)
+
+    /** Serialized user learning data (frequency + bigrams + dictionary) */
+    var learningData: String
+        get() = settings.getString(KEY_LEARNING_DATA, "")
+        set(value) = settings.putString(KEY_LEARNING_DATA, value)
+
     companion object {
         private const val KEY_ENHANCED_PREDICTIONS = "enhanced_predictions"
         private const val KEY_SHOW_PREDICTIONS = "show_predictions"
@@ -69,5 +79,7 @@ class KeyboardPreferences(private val settings: PlatformSettings) {
         private const val KEY_CLIPBOARD_HISTORY = "clipboard_history"
         private const val KEY_CLIPBOARD_DATA = "clipboard_data"
         private const val KEY_SLIDEBOARD_DATA = "slideboard_data"
+        private const val KEY_LEARNING_ENABLED = "learning_enabled"
+        private const val KEY_LEARNING_DATA = "learning_data"
     }
 }

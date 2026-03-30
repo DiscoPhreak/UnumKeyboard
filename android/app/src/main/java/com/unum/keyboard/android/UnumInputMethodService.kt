@@ -33,6 +33,7 @@ class UnumInputMethodService : InputMethodService(),
     private val currentWord = StringBuilder()
     private val contextWords = mutableListOf<String>()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private var learningEnabled = true
 
     // System clipboard listener
     private var systemClipboard: AndroidClipboardManager? = null
@@ -43,6 +44,7 @@ class UnumInputMethodService : InputMethodService(),
     override fun onCreate() {
         super.onCreate()
         loadDictionary()
+        loadLearningData()
         setupSystemClipboardListener()
     }
 
@@ -94,6 +96,7 @@ class UnumInputMethodService : InputMethodService(),
     override fun onDestroy() {
         systemClipboard?.removePrimaryClipChangedListener(clipboardListener)
         saveClipboardData()
+        saveLearningData()
         pipeline?.destroy()
         super.onDestroy()
     }
@@ -155,6 +158,9 @@ class UnumInputMethodService : InputMethodService(),
                 contextWords.add(word)
                 if (contextWords.size > 5) contextWords.removeAt(0)
                 pipeline?.onWordCommitted(word)
+                if (learningEnabled) {
+                    predictionService.learnWord(word, System.currentTimeMillis())
+                }
                 currentWord.clear()
                 keyboardView?.currentPrefix = ""
             }
@@ -162,6 +168,9 @@ class UnumInputMethodService : InputMethodService(),
             if (currentWord.isNotEmpty()) {
                 val word = currentWord.toString()
                 pipeline?.onWordCommitted(word)
+                if (learningEnabled) {
+                    predictionService.learnWord(word, System.currentTimeMillis())
+                }
                 currentWord.clear()
                 keyboardView?.currentPrefix = ""
             }
@@ -315,6 +324,9 @@ class UnumInputMethodService : InputMethodService(),
             contextWords.add(topWord)
             if (contextWords.size > 5) contextWords.removeAt(0)
             pipeline?.onWordCommitted(topWord)
+            if (learningEnabled) {
+                predictionService.learnWord(topWord, System.currentTimeMillis())
+            }
             currentWord.clear()
             keyboardView?.currentPrefix = ""
         }
@@ -331,6 +343,9 @@ class UnumInputMethodService : InputMethodService(),
         contextWords.add(word)
         if (contextWords.size > 5) contextWords.removeAt(0)
         pipeline?.onWordCommitted(word)
+        if (learningEnabled) {
+            predictionService.learnWord(word, System.currentTimeMillis())
+        }
         currentWord.clear()
         keyboardView?.currentPrefix = ""
     }
@@ -366,7 +381,26 @@ class UnumInputMethodService : InputMethodService(),
         }
     }
 
-    // ---- Persistence ----
+    // ---- Learning persistence (M11) ----
+
+    private fun loadLearningData() {
+        val prefs = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
+        learningEnabled = prefs.getBoolean("learning_enabled", true)
+        val data = prefs.getString("learning_data", "") ?: ""
+        if (data.isNotEmpty()) {
+            predictionService.loadLearningData(data)
+        }
+    }
+
+    private fun saveLearningData() {
+        if (!learningEnabled) return
+        val prefs = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
+        prefs.edit()
+            .putString("learning_data", predictionService.saveLearningData())
+            .apply()
+    }
+
+    // ---- Clipboard persistence ----
 
     private fun loadClipboardData() {
         val prefs = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
