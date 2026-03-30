@@ -26,6 +26,8 @@ import com.unum.keyboard.layout.KeyGeometry
 import com.unum.keyboard.layout.KeyType
 import com.unum.keyboard.layout.LayoutEngine
 import com.unum.keyboard.prediction.TrieDictionary
+import com.unum.keyboard.settings.KeyboardConfig
+import com.unum.keyboard.settings.KeyboardTheme
 import com.unum.keyboard.text.CursorController
 import com.unum.keyboard.text.EditingAction
 
@@ -126,7 +128,38 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     private var pressedKeyId: String? = null
-    private val keyCornerRadius = 8f
+    private var keyCornerRadius = 8f
+
+    // Active theme and config (M12)
+    private var activeTheme: KeyboardTheme = KeyboardTheme.AMOLED_DARK
+    private var activeConfig: KeyboardConfig = KeyboardConfig()
+
+    /**
+     * Apply a new theme. Updates all paint colors and redraws.
+     */
+    fun applyTheme(theme: KeyboardTheme) {
+        activeTheme = theme
+        backgroundPaint.color = theme.backgroundColor.toInt()
+        keyBgPaint.color = theme.keyBackgroundColor.toInt()
+        keyPressedPaint.color = theme.keyPressedColor.toInt()
+        specialKeyBgPaint.color = theme.specialKeyBackgroundColor.toInt()
+        textPaint.color = theme.keyTextColor.toInt()
+        specialTextPaint.color = theme.specialKeyTextColor.toInt()
+        flickHintPaint.color = theme.flickHintColor.toInt()
+        gestureTrailPaint.color = theme.gestureTrailColor.toInt()
+        trackpadActivePaint.color = theme.trackpadActiveColor.toInt()
+        invalidate()
+    }
+
+    /**
+     * Apply a new config. Updates dimensions and timing, then relayouts.
+     */
+    fun applyConfig(config: KeyboardConfig) {
+        activeConfig = config
+        keyCornerRadius = config.keyCornerRadius
+        invalidate()
+        requestLayout()
+    }
 
     // Backspace repeat
     private val handler = Handler(Looper.getMainLooper())
@@ -136,7 +169,7 @@ class KeyboardView @JvmOverloads constructor(
             if (isBackspaceHeld) {
                 listener?.onDelete()
                 performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-                handler.postDelayed(this, BACKSPACE_REPEAT_INTERVAL)
+                handler.postDelayed(this, activeConfig.backspaceRepeatInterval)
             }
         }
     }
@@ -148,18 +181,19 @@ class KeyboardView @JvmOverloads constructor(
 
     private fun recomputeLayout() {
         if (width > 0 && height > 0) {
+            val density = resources.displayMetrics.density
             computedLayout = layoutEngine.computeLayout(
                 layout = keyboardState.currentLayout,
                 screenWidth = width.toFloat(),
                 keyboardHeight = height.toFloat(),
-                horizontalPadding = HORIZONTAL_PADDING * resources.displayMetrics.density,
-                verticalPadding = VERTICAL_PADDING * resources.displayMetrics.density,
-                keySpacing = KEY_SPACING * resources.displayMetrics.density
+                horizontalPadding = activeConfig.horizontalPadding * density,
+                verticalPadding = activeConfig.verticalPadding * density,
+                keySpacing = activeConfig.keySpacing * density
             )
-            textPaint.textSize = TEXT_SIZE * resources.displayMetrics.density
-            specialTextPaint.textSize = SPECIAL_TEXT_SIZE * resources.displayMetrics.density
-            flickHintPaint.textSize = FLICK_HINT_SIZE * resources.displayMetrics.density
-            gestureTrailPaint.strokeWidth = GESTURE_TRAIL_WIDTH * resources.displayMetrics.density
+            textPaint.textSize = activeConfig.keyTextSize * density
+            specialTextPaint.textSize = activeConfig.specialKeyTextSize * density
+            flickHintPaint.textSize = activeConfig.flickHintTextSize * density
+            gestureTrailPaint.strokeWidth = GESTURE_TRAIL_WIDTH * density
         }
     }
 
@@ -267,7 +301,7 @@ class KeyboardView @JvmOverloads constructor(
                     if (geo.key.type == KeyType.BACKSPACE) {
                         isBackspaceHeld = true
                         listener?.onDelete()
-                        handler.postDelayed(backspaceRepeatRunnable, BACKSPACE_REPEAT_DELAY)
+                        handler.postDelayed(backspaceRepeatRunnable, activeConfig.backspaceRepeatDelay)
                     }
 
                     invalidate()
@@ -475,7 +509,7 @@ class KeyboardView @JvmOverloads constructor(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val width = MeasureSpec.getSize(widthMeasureSpec)
         val density = resources.displayMetrics.density
-        val height = (KEYBOARD_HEIGHT_DP * density).toInt()
+        val height = (activeConfig.keyboardHeight * density).toInt()
         setMeasuredDimension(width, height)
     }
 

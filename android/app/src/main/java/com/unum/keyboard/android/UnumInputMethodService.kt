@@ -18,6 +18,8 @@ import com.unum.keyboard.gesture.GestureCandidate
 import com.unum.keyboard.prediction.PredictionService
 import com.unum.keyboard.prediction.StubNeuralReranker
 import com.unum.keyboard.prediction.TwoStagePipeline
+import com.unum.keyboard.settings.KeyboardConfig
+import com.unum.keyboard.settings.KeyboardTheme
 import com.unum.keyboard.text.EditingAction
 
 class UnumInputMethodService : InputMethodService(),
@@ -116,10 +118,19 @@ class UnumInputMethodService : InputMethodService(),
 
         keyboardView = KeyboardView(this).also {
             it.listener = this
-            val gestureEnabled = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
-                .getBoolean("gesture_typing", false)
+            val prefs = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
+            val gestureEnabled = prefs.getBoolean("gesture_typing", false)
             it.gestureTypingEnabled = gestureEnabled
             predictionService.dictionary?.let { dict -> it.setDictionary(dict) }
+
+            // Apply theme and config (M12)
+            val themeId = prefs.getString("theme_id", "amoled_dark") ?: "amoled_dark"
+            it.applyTheme(KeyboardTheme.fromId(themeId))
+            val configData = prefs.getString("config_data", "") ?: ""
+            if (configData.isNotEmpty()) {
+                it.applyConfig(KeyboardConfig.deserialize(configData))
+            }
+
             container.addView(it)
         }
 

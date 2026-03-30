@@ -18,19 +18,56 @@ class KeyboardView: UIView {
 
     weak var delegate: KeyboardViewDelegate?
 
-    // AMOLED dark theme
-    private let bgColor = UIColor.black
-    private let keyBgColor = UIColor(white: 0.10, alpha: 1.0)
-    private let keyPressedColor = UIColor(white: 0.20, alpha: 1.0)
-    private let specialKeyBgColor = UIColor(white: 0.16, alpha: 1.0)
-    private let textColor = UIColor.white
-    private let specialTextColor = UIColor(white: 0.73, alpha: 1.0)
-    private let flickHintColor = UIColor(white: 0.40, alpha: 1.0)
+    // Theme colors (M12 — configurable via applyTheme)
+    private var bgColor = UIColor.black
+    private var keyBgColor = UIColor(white: 0.10, alpha: 1.0)
+    private var keyPressedColor = UIColor(white: 0.20, alpha: 1.0)
+    private var specialKeyBgColor = UIColor(white: 0.16, alpha: 1.0)
+    private var textColor = UIColor.white
+    private var specialTextColor = UIColor(white: 0.73, alpha: 1.0)
+    private var flickHintColor = UIColor(white: 0.40, alpha: 1.0)
 
-    private let keyCornerRadius: CGFloat = 6
-    private let keySpacing: CGFloat = 4
-    private let horizontalPadding: CGFloat = 3
-    private let verticalPadding: CGFloat = 6
+    // Config dimensions (M12 — configurable via applyConfig)
+    private var keyCornerRadius: CGFloat = 6
+    private var keySpacing: CGFloat = 4
+    private var horizontalPadding: CGFloat = 3
+    private var verticalPadding: CGFloat = 6
+
+    /// Apply a theme using ARGB Long values from shared KeyboardTheme.
+    func applyTheme(
+        backgroundColor: UInt,
+        keyBackground: UInt,
+        keyPressed: UInt,
+        specialKeyBackground: UInt,
+        keyText: UInt,
+        specialKeyText: UInt,
+        flickHint: UInt
+    ) {
+        bgColor = UIColor(argb: backgroundColor)
+        keyBgColor = UIColor(argb: keyBackground)
+        keyPressedColor = UIColor(argb: keyPressed)
+        specialKeyBgColor = UIColor(argb: specialKeyBackground)
+        textColor = UIColor(argb: keyText)
+        specialTextColor = UIColor(argb: specialKeyText)
+        flickHintColor = UIColor(argb: flickHint)
+        self.backgroundColor = bgColor
+        setNeedsLayout()
+        setNeedsDisplay()
+    }
+
+    /// Apply config dimensions.
+    func applyConfig(
+        cornerRadius: CGFloat = 6,
+        spacing: CGFloat = 4,
+        hPadding: CGFloat = 3,
+        vPadding: CGFloat = 6
+    ) {
+        keyCornerRadius = cornerRadius
+        keySpacing = spacing
+        horizontalPadding = hPadding
+        verticalPadding = vPadding
+        setNeedsLayout()
+    }
 
     // Flick detection constants
     private let minFlickDistance: CGFloat = 20
@@ -568,5 +605,17 @@ class FlickKeyButton: UIControl {
                 hintLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4)
             ])
         }
+    }
+}
+
+// MARK: - UIColor ARGB convenience
+
+extension UIColor {
+    convenience init(argb: UInt) {
+        let a = CGFloat((argb >> 24) & 0xFF) / 255.0
+        let r = CGFloat((argb >> 16) & 0xFF) / 255.0
+        let g = CGFloat((argb >> 8) & 0xFF) / 255.0
+        let b = CGFloat(argb & 0xFF) / 255.0
+        self.init(red: r, green: g, blue: b, alpha: a)
     }
 }

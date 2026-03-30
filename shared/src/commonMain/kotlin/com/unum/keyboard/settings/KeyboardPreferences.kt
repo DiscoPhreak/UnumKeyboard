@@ -68,6 +68,24 @@ class KeyboardPreferences(private val settings: PlatformSettings) {
         get() = settings.getString(KEY_LEARNING_DATA, "")
         set(value) = settings.putString(KEY_LEARNING_DATA, value)
 
+    /** Selected theme ID. Default: amoled_dark */
+    var themeId: String
+        get() = settings.getString(KEY_THEME_ID, "amoled_dark")
+        set(value) = settings.putString(KEY_THEME_ID, value)
+
+    /** Get the current theme object */
+    val theme: KeyboardTheme get() = KeyboardTheme.fromId(themeId)
+
+    /** Serialized keyboard config (dimensions, timing) */
+    var configData: String
+        get() = settings.getString(KEY_CONFIG_DATA, "")
+        set(value) = settings.putString(KEY_CONFIG_DATA, value)
+
+    /** Get/set the keyboard config */
+    var config: KeyboardConfig
+        get() = KeyboardConfig.deserialize(configData)
+        set(value) { configData = value.serialize() }
+
     companion object {
         private const val KEY_ENHANCED_PREDICTIONS = "enhanced_predictions"
         private const val KEY_SHOW_PREDICTIONS = "show_predictions"
@@ -81,5 +99,7 @@ class KeyboardPreferences(private val settings: PlatformSettings) {
         private const val KEY_SLIDEBOARD_DATA = "slideboard_data"
         private const val KEY_LEARNING_ENABLED = "learning_enabled"
         private const val KEY_LEARNING_DATA = "learning_data"
+        private const val KEY_THEME_ID = "theme_id"
+        private const val KEY_CONFIG_DATA = "config_data"
     }
 }
