@@ -86,6 +86,23 @@ class KeyboardPreferences(private val settings: PlatformSettings) {
         get() = KeyboardConfig.deserialize(configData)
         set(value) { configData = value.serialize() }
 
+    /** Active input locale. Default: en-US */
+    var locale: String
+        get() = settings.getString(KEY_LOCALE, "en-US")
+        set(value) = settings.putString(KEY_LOCALE, value)
+
+    /** Enabled locales list (comma-separated). Default: en-US */
+    var enabledLocales: String
+        get() = settings.getString(KEY_ENABLED_LOCALES, "en-US")
+        set(value) = settings.putString(KEY_ENABLED_LOCALES, value)
+
+    fun getEnabledLocaleList(): List<String> =
+        enabledLocales.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+
+    fun setEnabledLocaleList(locales: List<String>) {
+        enabledLocales = locales.joinToString(",")
+    }
+
     companion object {
         private const val KEY_ENHANCED_PREDICTIONS = "enhanced_predictions"
         private const val KEY_SHOW_PREDICTIONS = "show_predictions"
@@ -101,5 +118,7 @@ class KeyboardPreferences(private val settings: PlatformSettings) {
         private const val KEY_LEARNING_DATA = "learning_data"
         private const val KEY_THEME_ID = "theme_id"
         private const val KEY_CONFIG_DATA = "config_data"
+        private const val KEY_LOCALE = "locale"
+        private const val KEY_ENABLED_LOCALES = "enabled_locales"
     }
 }

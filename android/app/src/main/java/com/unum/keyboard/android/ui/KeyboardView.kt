@@ -205,6 +205,15 @@ class KeyboardView @JvmOverloads constructor(
         gestureDecoder = GestureDecoder(dictionary)
     }
 
+    /**
+     * Switch the keyboard locale. Updates layout and redraws.
+     */
+    fun setLocale(locale: String) {
+        keyboardState.setLocale(locale)
+        recomputeLayout()
+        invalidate()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), backgroundPaint)

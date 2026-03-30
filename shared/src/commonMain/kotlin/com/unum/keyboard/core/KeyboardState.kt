@@ -2,7 +2,7 @@ package com.unum.keyboard.core
 
 import com.unum.keyboard.layout.KeyType
 import com.unum.keyboard.layout.KeyboardLayout
-import com.unum.keyboard.layout.QwertyLayouts
+import com.unum.keyboard.layout.LayoutRegistry
 
 enum class ShiftState {
     OFF,
@@ -22,15 +22,31 @@ class KeyboardState {
     var layoutMode: LayoutMode = LayoutMode.LETTERS
         private set
 
+    /** Current locale — determines which layout set is used */
+    var locale: String = "en-US"
+        private set
+
+    private var localeLayouts: LayoutRegistry.LocaleLayouts = LayoutRegistry.getLayouts("en-US")
+
     val currentLayout: KeyboardLayout
         get() = when (layoutMode) {
             LayoutMode.LETTERS -> when (shiftState) {
-                ShiftState.OFF -> QwertyLayouts.enUsLowercase
-                ShiftState.ON, ShiftState.CAPS_LOCK -> QwertyLayouts.enUsUppercase
+                ShiftState.OFF -> localeLayouts.lowercase
+                ShiftState.ON, ShiftState.CAPS_LOCK -> localeLayouts.uppercase
             }
-            LayoutMode.SYMBOLS -> QwertyLayouts.enUsSymbols
-            LayoutMode.SYMBOLS_2 -> QwertyLayouts.enUsSymbols2
+            LayoutMode.SYMBOLS -> localeLayouts.symbols
+            LayoutMode.SYMBOLS_2 -> localeLayouts.symbols2
         }
+
+    /**
+     * Switch to a different locale. Resets to letters mode.
+     */
+    fun setLocale(locale: String) {
+        this.locale = locale
+        localeLayouts = LayoutRegistry.getLayouts(locale)
+        layoutMode = LayoutMode.LETTERS
+        shiftState = ShiftState.OFF
+    }
 
     fun toggleShift() {
         shiftState = when (shiftState) {
@@ -72,7 +88,6 @@ class KeyboardState {
                 when (layoutMode) {
                     LayoutMode.LETTERS -> toggleSymbols()
                     LayoutMode.SYMBOLS -> {
-                        // Check if it's the #+=  or ABC toggle
                         toggleSymbols()
                     }
                     LayoutMode.SYMBOLS_2 -> toggleSymbols2()

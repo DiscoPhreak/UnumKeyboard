@@ -36,6 +36,7 @@ class UnumInputMethodService : InputMethodService(),
     private val contextWords = mutableListOf<String>()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var learningEnabled = true
+    private var currentLocale = "en-US"
 
     // System clipboard listener
     private var systemClipboard: AndroidClipboardManager? = null
@@ -122,6 +123,10 @@ class UnumInputMethodService : InputMethodService(),
             val gestureEnabled = prefs.getBoolean("gesture_typing", false)
             it.gestureTypingEnabled = gestureEnabled
             predictionService.dictionary?.let { dict -> it.setDictionary(dict) }
+
+            // Apply locale (M13)
+            currentLocale = prefs.getString("locale", "en-US") ?: "en-US"
+            it.setLocale(currentLocale)
 
             // Apply theme and config (M12)
             val themeId = prefs.getString("theme_id", "amoled_dark") ?: "amoled_dark"
