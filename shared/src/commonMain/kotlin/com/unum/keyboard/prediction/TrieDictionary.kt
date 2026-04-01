@@ -73,6 +73,16 @@ class TrieDictionary {
         }
     }
 
+    /**
+     * Iterate all words in the dictionary with their frequencies.
+     */
+    fun forEachWord(callback: (word: String, frequency: Int) -> Unit) {
+        for ((id, word) in wordById) {
+            val freq = getFrequency(word)
+            callback(word, freq)
+        }
+    }
+
     private fun findNode(key: String): TrieNode? {
         var node = root
         for (ch in key) {
