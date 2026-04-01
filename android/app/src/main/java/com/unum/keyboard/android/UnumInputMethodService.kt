@@ -38,6 +38,13 @@ class UnumInputMethodService : InputMethodService(),
     private var learningEnabled = true
     private var currentLocale = "en-US"
 
+    // Autocorrect undo state
+    private data class AutoCorrectionUndo(
+        val original: String,
+        val corrected: String
+    )
+    private var lastAutoCorrection: AutoCorrectionUndo? = null
+
     // System clipboard listener
     private var systemClipboard: AndroidClipboardManager? = null
     private val clipboardListener = AndroidClipboardManager.OnPrimaryClipChangedListener {
@@ -166,33 +173,67 @@ class UnumInputMethodService : InputMethodService(),
 
     override fun onText(text: String) {
         val ic = currentInputConnection ?: return
-        ic.commitText(text, 1)
 
         if (text == " ") {
             if (currentWord.isNotEmpty()) {
                 val word = currentWord.toString()
-                contextWords.add(word)
+                val correction = predictionService.getAutoCorrection(word)
+                val committedWord: String
+
+                if (correction != null && correction.shouldAutoApply) {
+                    // Auto-correct: replace typed word with correction + space
+                    ic.deleteSurroundingText(word.length, 0)
+                    ic.commitText(correction.corrected + " ", 1)
+                    committedWord = correction.corrected
+                    lastAutoCorrection = AutoCorrectionUndo(word, correction.corrected)
+                } else {
+                    ic.commitText(" ", 1)
+                    committedWord = word
+                    lastAutoCorrection = null
+                }
+
+                contextWords.add(committedWord)
                 if (contextWords.size > 5) contextWords.removeAt(0)
-                pipeline?.onWordCommitted(word)
+                pipeline?.onWordCommitted(committedWord)
                 if (learningEnabled) {
-                    predictionService.learnWord(word, System.currentTimeMillis())
+                    predictionService.learnWord(committedWord, System.currentTimeMillis())
                 }
                 currentWord.clear()
                 keyboardView?.currentPrefix = ""
+            } else {
+                ic.commitText(" ", 1)
+                lastAutoCorrection = null
             }
         } else if (text == "." || text == "!" || text == "?" || text == "\n") {
             if (currentWord.isNotEmpty()) {
                 val word = currentWord.toString()
-                pipeline?.onWordCommitted(word)
+                val correction = predictionService.getAutoCorrection(word)
+                val committedWord: String
+
+                if (correction != null && correction.shouldAutoApply) {
+                    ic.deleteSurroundingText(word.length, 0)
+                    ic.commitText(correction.corrected + text, 1)
+                    committedWord = correction.corrected
+                } else {
+                    ic.commitText(text, 1)
+                    committedWord = word
+                }
+
+                pipeline?.onWordCommitted(committedWord)
                 if (learningEnabled) {
-                    predictionService.learnWord(word, System.currentTimeMillis())
+                    predictionService.learnWord(committedWord, System.currentTimeMillis())
                 }
                 currentWord.clear()
                 keyboardView?.currentPrefix = ""
+            } else {
+                ic.commitText(text, 1)
             }
+            lastAutoCorrection = null
             contextWords.clear()
             pipeline?.onSentenceBoundary()
         } else {
+            ic.commitText(text, 1)
+            lastAutoCorrection = null
             currentWord.append(text)
             pipeline?.onKeystroke(currentWord.toString(), contextWords)
             keyboardView?.currentPrefix = currentWord.toString()
@@ -201,6 +242,24 @@ class UnumInputMethodService : InputMethodService(),
 
     override fun onDelete() {
         val ic = currentInputConnection ?: return
+
+        val undo = lastAutoCorrection
+        if (undo != null) {
+            // Undo auto-correction: remove "corrected " and insert "original "
+            ic.deleteSurroundingText(undo.corrected.length + 1, 0)
+            ic.commitText(undo.original + " ", 1)
+            lastAutoCorrection = null
+
+            // Block this word from future auto-corrections
+            predictionService.addToBlockList(undo.original)
+
+            currentWord.clear()
+            pipeline?.onKeystroke("", contextWords)
+            keyboardView?.currentPrefix = ""
+            return
+        }
+
+        // Normal backspace
         ic.deleteSurroundingText(1, 0)
 
         if (currentWord.isNotEmpty()) {
@@ -406,6 +465,10 @@ class UnumInputMethodService : InputMethodService(),
         if (data.isNotEmpty()) {
             predictionService.loadLearningData(data)
         }
+        val blockListData = prefs.getString("autocorrect_blocklist", "") ?: ""
+        if (blockListData.isNotEmpty()) {
+            predictionService.loadBlockList(blockListData)
+        }
     }
 
     private fun saveLearningData() {
@@ -413,6 +476,7 @@ class UnumInputMethodService : InputMethodService(),
         val prefs = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
         prefs.edit()
             .putString("learning_data", predictionService.saveLearningData())
+            .putString("autocorrect_blocklist", predictionService.serializeBlockList())
             .apply()
     }
 

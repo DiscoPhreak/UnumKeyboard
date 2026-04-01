@@ -129,8 +129,8 @@ class PredictionEngine(
             results.add(Prediction(candidate.word, boostedScore, PredictionSource.TRIE))
         }
 
-        // 2. Autocorrect if few trie results
-        if (results.size < maxResults && prefix.length >= 2) {
+        // 2. Always run autocorrect for suggestion candidates
+        if (prefix.length >= 2) {
             val corrections = autoCorrect.corrections(prefix, maxResults)
             for (correction in corrections) {
                 if (results.any { it.word == correction.word }) continue
@@ -164,6 +164,16 @@ class PredictionEngine(
         val index = contextWords.size - 1 - wordsBack
         if (index < 0) return -1
         return dictionary.getWordId(contextWords[index])
+    }
+
+    /**
+     * Evaluate auto-correction for a completed word (called at commit time).
+     */
+    fun evaluateAutoCorrection(
+        word: String,
+        userDictionaryContains: (String) -> Boolean
+    ): AutoCorrectionResult {
+        return autoCorrect.evaluateCorrection(word, userDictionaryContains)
     }
 
     companion object {

@@ -1,11 +1,13 @@
 package com.unum.keyboard.prediction
 
 import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class AutoCorrectTest {
 
-    private fun createAutoCorrect(): AutoCorrect {
+    private fun createAutoCorrect(withIndex: Boolean = false): AutoCorrect {
         val dict = TrieDictionary()
         val words = listOf(
             "the" to 100000, "there" to 5000, "their" to 4000,
@@ -17,13 +19,16 @@ class AutoCorrectTest {
         for ((word, freq) in words) {
             dict.insert(word, freq)
         }
-        return AutoCorrect(dict)
+        val ac = AutoCorrect(dict)
+        if (withIndex) ac.buildIndex()
+        return ac
     }
+
+    // ---- Original tests (corrections) ----
 
     @Test
     fun corrections_findsTransposition() {
         val ac = createAutoCorrect()
-        // "teh" → "the" (transposition of h and e)
         val results = ac.corrections("teh")
         val words = results.map { it.word }
         assertTrue("the" in words, "Should correct 'teh' to 'the', got: $words")
@@ -32,7 +37,6 @@ class AutoCorrectTest {
     @Test
     fun corrections_findsSubstitution() {
         val ac = createAutoCorrect()
-        // "thd" → "the" (substitution of d for e)
         val results = ac.corrections("thd")
         val words = results.map { it.word }
         assertTrue("the" in words, "Should correct 'thd' to 'the', got: $words")
@@ -41,7 +45,6 @@ class AutoCorrectTest {
     @Test
     fun corrections_findsDeletion() {
         val ac = createAutoCorrect()
-        // "helo" → "hello" (missing l)
         val results = ac.corrections("helo")
         val words = results.map { it.word }
         assertTrue("hello" in words, "Should correct 'helo' to 'hello', got: $words")
@@ -50,7 +53,6 @@ class AutoCorrectTest {
     @Test
     fun corrections_findsInsertion() {
         val ac = createAutoCorrect()
-        // "thee" → "the" (extra e)
         val results = ac.corrections("thee")
         val words = results.map { it.word }
         assertTrue("the" in words, "Should correct 'thee' to 'the', got: $words")
@@ -67,7 +69,6 @@ class AutoCorrectTest {
     fun corrections_sortedByEditDistanceThenFrequency() {
         val ac = createAutoCorrect()
         val results = ac.corrections("thr")
-        // Edit distance 1 corrections should come before distance 2
         if (results.size >= 2) {
             assertTrue(results[0].editDistance <= results[1].editDistance,
                 "Results should be sorted by edit distance")
@@ -83,7 +84,6 @@ class AutoCorrectTest {
 
     @Test
     fun corrections_adjacencyWeighting() {
-        // With adjacency info, adjacent key typos should have lower cost
         val dict = TrieDictionary()
         dict.insert("the", 100000)
         dict.insert("she", 8000)
@@ -93,10 +93,156 @@ class AutoCorrectTest {
             "r" to listOf("t", "e")
         )
         val ac = AutoCorrect(dict, adjacency)
-        // "rhe" is NOT in dictionary, so it will be corrected
-        // r→t is adjacent, so "the" should have lower weighted cost than "she" (s→r not adjacent)
         val results = ac.corrections("rhe")
         val words = results.map { it.word }
         assertTrue("the" in words, "Adjacent key correction should suggest 'the' for 'rhe', got: $words")
+    }
+
+    // ---- Symmetric delete index tests ----
+
+    @Test
+    fun indexedCorrections_findsTransposition() {
+        val ac = createAutoCorrect(withIndex = true)
+        val results = ac.corrections("teh")
+        val words = results.map { it.word }
+        assertTrue("the" in words, "Indexed: Should correct 'teh' to 'the', got: $words")
+    }
+
+    @Test
+    fun indexedCorrections_findsSubstitution() {
+        val ac = createAutoCorrect(withIndex = true)
+        val results = ac.corrections("thd")
+        val words = results.map { it.word }
+        assertTrue("the" in words, "Indexed: Should correct 'thd' to 'the', got: $words")
+    }
+
+    @Test
+    fun indexedCorrections_findsDeletion() {
+        val ac = createAutoCorrect(withIndex = true)
+        val results = ac.corrections("helo")
+        val words = results.map { it.word }
+        assertTrue("hello" in words, "Indexed: Should correct 'helo' to 'hello', got: $words")
+    }
+
+    @Test
+    fun indexedCorrections_findsInsertion() {
+        val ac = createAutoCorrect(withIndex = true)
+        val results = ac.corrections("thee")
+        val words = results.map { it.word }
+        assertTrue("the" in words, "Indexed: Should correct 'thee' to 'the', got: $words")
+    }
+
+    @Test
+    fun indexedCorrections_returnsEmptyForCorrectWord() {
+        val ac = createAutoCorrect(withIndex = true)
+        val results = ac.corrections("the")
+        assertTrue(results.isEmpty(), "Indexed: Should return empty for correct word")
+    }
+
+    // ---- Confidence / evaluateCorrection tests ----
+
+    @Test
+    fun evaluateCorrection_highConfidenceForTransposition() {
+        val ac = createAutoCorrect(withIndex = true)
+        val result = ac.evaluateCorrection("teh")
+        assertTrue(result.confidence > 0.5f,
+            "Transposition of high-freq word should have high confidence, got: ${result.confidence}")
+        assertEquals("the", result.corrected)
+        assertTrue(result.shouldAutoApply, "Should auto-apply for clear transposition")
+    }
+
+    @Test
+    fun evaluateCorrection_noAutoApplyForDictionaryWord() {
+        val ac = createAutoCorrect(withIndex = true)
+        // "have" is a valid dictionary word — should not auto-correct even though "gave" etc. exist
+        val result = ac.evaluateCorrection("have")
+        assertFalse(result.shouldAutoApply, "Should not auto-apply for valid dictionary word")
+    }
+
+    @Test
+    fun evaluateCorrection_noAutoApplyForUserDictionaryWord() {
+        val ac = createAutoCorrect(withIndex = true)
+        val result = ac.evaluateCorrection("xyz123") { word -> word == "xyz123" }
+        assertFalse(result.shouldAutoApply, "Should not auto-apply for user dictionary word")
+    }
+
+    @Test
+    fun evaluateCorrection_noAutoApplyForBlockedWord() {
+        val ac = createAutoCorrect(withIndex = true)
+        ac.addToBlockList("teh")
+        val result = ac.evaluateCorrection("teh")
+        assertFalse(result.shouldAutoApply, "Should not auto-apply for blocked word")
+        assertEquals(0f, result.confidence)
+    }
+
+    @Test
+    fun evaluateCorrection_noAutoApplyForSingleChar() {
+        val ac = createAutoCorrect(withIndex = true)
+        val result = ac.evaluateCorrection("x")
+        assertFalse(result.shouldAutoApply, "Should not auto-apply for single character")
+    }
+
+    // ---- Capitalization tests ----
+
+    @Test
+    fun evaluateCorrection_preservesInitialCap() {
+        val ac = createAutoCorrect(withIndex = true)
+        val result = ac.evaluateCorrection("Teh")
+        assertEquals("The", result.corrected, "Should preserve initial capitalization")
+    }
+
+    @Test
+    fun evaluateCorrection_preservesAllCaps() {
+        val ac = createAutoCorrect(withIndex = true)
+        val result = ac.evaluateCorrection("TEH")
+        assertEquals("THE", result.corrected, "Should preserve all-caps")
+    }
+
+    @Test
+    fun evaluateCorrection_preservesLowercase() {
+        val ac = createAutoCorrect(withIndex = true)
+        val result = ac.evaluateCorrection("teh")
+        assertEquals("the", result.corrected, "Should preserve lowercase")
+    }
+
+    // ---- Block list tests ----
+
+    @Test
+    fun blockList_preventsAutoApply() {
+        val ac = createAutoCorrect(withIndex = true)
+        ac.addToBlockList("teh")
+        assertTrue(ac.isBlocked("teh"))
+        val result = ac.evaluateCorrection("teh")
+        assertFalse(result.shouldAutoApply)
+    }
+
+    @Test
+    fun blockList_serializeDeserializeRoundTrip() {
+        val ac = createAutoCorrect(withIndex = true)
+        ac.addToBlockList("teh")
+        ac.addToBlockList("wrld")
+        val serialized = ac.serializeBlockList()
+
+        val ac2 = createAutoCorrect(withIndex = true)
+        ac2.deserializeBlockList(serialized)
+        assertTrue(ac2.isBlocked("teh"))
+        assertTrue(ac2.isBlocked("wrld"))
+    }
+
+    @Test
+    fun blockList_addAndRemove() {
+        val ac = createAutoCorrect(withIndex = true)
+        ac.addToBlockList("teh")
+        assertTrue(ac.isBlocked("teh"))
+        ac.removeFromBlockList("teh")
+        assertFalse(ac.isBlocked("teh"))
+    }
+
+    @Test
+    fun blockList_caseInsensitive() {
+        val ac = createAutoCorrect(withIndex = true)
+        ac.addToBlockList("Teh")
+        assertTrue(ac.isBlocked("teh"))
+        assertTrue(ac.isBlocked("TEH"))
     }
 }

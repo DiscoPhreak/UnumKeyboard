@@ -51,6 +51,7 @@ class PredictionService {
         ngram.loadTrigrams(trigramsText)
 
         val ac = AutoCorrect(dict, adjacencyMap)
+        ac.buildIndex()
         val pe = PredictionEngine(dict, ngram, ac)
 
         // Find max unigram frequency for normalization
@@ -132,6 +133,34 @@ class PredictionService {
      */
     fun saveLearningData(): String {
         return learningManager?.serialize() ?: ""
+    }
+
+    // ---- Autocorrect ----
+
+    /**
+     * Evaluate a word for auto-correction at commit time.
+     * Returns null if autocorrect is not initialized.
+     */
+    fun getAutoCorrection(word: String): AutoCorrectionResult? {
+        val eng = engine ?: return null
+        val lm = learningManager
+        return eng.evaluateAutoCorrection(
+            word = word,
+            userDictionaryContains = { w -> lm?.userDictionary?.contains(w) == true }
+        )
+    }
+
+    /**
+     * Add a word to the autocorrect block list (user rejected this correction).
+     */
+    fun addToBlockList(word: String) {
+        autoCorrect?.addToBlockList(word)
+    }
+
+    fun serializeBlockList(): String = autoCorrect?.serializeBlockList() ?: ""
+
+    fun loadBlockList(data: String) {
+        autoCorrect?.deserializeBlockList(data)
     }
 }
 
