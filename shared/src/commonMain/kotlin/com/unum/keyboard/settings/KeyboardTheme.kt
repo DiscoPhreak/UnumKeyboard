@@ -25,7 +25,6 @@ data class KeyboardTheme(
     val suggestionDividerColor: Long,
     // Accent
     val accentColor: Long,
-    val gestureTrailColor: Long,
     val trackpadActiveColor: Long
 ) {
     companion object {
@@ -43,7 +42,6 @@ data class KeyboardTheme(
             suggestionTextColor = 0xFFDDDDDD,
             suggestionDividerColor = 0xFF333333,
             accentColor = 0xFF2196F3,
-            gestureTrailColor = 0x80FFFFFF,
             trackpadActiveColor = 0xFF0D47A1
         )
 
@@ -61,7 +59,6 @@ data class KeyboardTheme(
             suggestionTextColor = 0xFFE0E0E0,
             suggestionDividerColor = 0xFF424242,
             accentColor = 0xFF64B5F6,
-            gestureTrailColor = 0x8064B5F6,
             trackpadActiveColor = 0xFF1565C0
         )
 
@@ -79,7 +76,6 @@ data class KeyboardTheme(
             suggestionTextColor = 0xFF212121,
             suggestionDividerColor = 0xFFBDBDBD,
             accentColor = 0xFF1976D2,
-            gestureTrailColor = 0x801976D2,
             trackpadActiveColor = 0xFF0D47A1
         )
 
@@ -97,7 +93,6 @@ data class KeyboardTheme(
             suggestionTextColor = 0xFFCCD6E0,
             suggestionDividerColor = 0xFF1B2838,
             accentColor = 0xFF48BB78,
-            gestureTrailColor = 0x8048BB78,
             trackpadActiveColor = 0xFF276749
         )
 

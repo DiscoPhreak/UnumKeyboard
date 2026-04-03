@@ -38,11 +38,6 @@ class KeyboardPreferences(private val settings: PlatformSettings) {
         get() = settings.getBoolean(KEY_SOUND_FEEDBACK, false)
         set(value) = settings.putBoolean(KEY_SOUND_FEEDBACK, value)
 
-    /** Enable gesture/swipe typing. Default: OFF */
-    var gestureTypingEnabled: Boolean
-        get() = settings.getBoolean(KEY_GESTURE_TYPING, false)
-        set(value) = settings.putBoolean(KEY_GESTURE_TYPING, value)
-
     /** Enable clipboard history tracking. Default: ON */
     var clipboardHistoryEnabled: Boolean
         get() = settings.getBoolean(KEY_CLIPBOARD_HISTORY, true)
@@ -110,7 +105,6 @@ class KeyboardPreferences(private val settings: PlatformSettings) {
         private const val KEY_HAPTIC_FEEDBACK = "haptic_feedback"
         private const val KEY_HAPTIC_INTENSITY = "haptic_intensity"
         private const val KEY_SOUND_FEEDBACK = "sound_feedback"
-        private const val KEY_GESTURE_TYPING = "gesture_typing"
         private const val KEY_CLIPBOARD_HISTORY = "clipboard_history"
         private const val KEY_CLIPBOARD_DATA = "clipboard_data"
         private const val KEY_SLIDEBOARD_DATA = "slideboard_data"
