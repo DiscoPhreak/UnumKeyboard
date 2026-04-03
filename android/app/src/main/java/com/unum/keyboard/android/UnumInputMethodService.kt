@@ -14,7 +14,6 @@ import com.unum.keyboard.android.ui.ClipboardPanel
 import com.unum.keyboard.android.ui.KeyboardView
 import com.unum.keyboard.android.ui.SuggestionBar
 import com.unum.keyboard.core.TextAction
-import com.unum.keyboard.gesture.GestureCandidate
 import com.unum.keyboard.prediction.PredictionService
 import com.unum.keyboard.prediction.StubNeuralReranker
 import com.unum.keyboard.prediction.TwoStagePipeline
@@ -127,10 +126,6 @@ class UnumInputMethodService : InputMethodService(),
         keyboardView = KeyboardView(this).also {
             it.listener = this
             val prefs = getSharedPreferences("unum_keyboard_prefs", MODE_PRIVATE)
-            val gestureEnabled = prefs.getBoolean("gesture_typing", false)
-            it.gestureTypingEnabled = gestureEnabled
-            predictionService.dictionary?.let { dict -> it.setDictionary(dict) }
-
             // Apply locale (M13)
             currentLocale = prefs.getString("locale", "en-US") ?: "en-US"
             it.setLocale(currentLocale)
@@ -389,21 +384,6 @@ class UnumInputMethodService : InputMethodService(),
             EditingAction.PASTE -> onTextAction(TextAction.Paste)
             EditingAction.UNDO -> onTextAction(TextAction.Undo)
             EditingAction.REDO -> onTextAction(TextAction.Redo)
-        }
-    }
-
-    override fun onGestureWord(candidates: List<GestureCandidate>) {
-        if (candidates.isNotEmpty()) {
-            suggestionBar?.updateSuggestions(candidates.map { it.word })
-            val topWord = candidates[0].word
-            contextWords.add(topWord)
-            if (contextWords.size > 5) contextWords.removeAt(0)
-            pipeline?.onWordCommitted(topWord)
-            if (learningEnabled) {
-                predictionService.learnWord(topWord, System.currentTimeMillis())
-            }
-            currentWord.clear()
-            keyboardView?.currentPrefix = ""
         }
     }
 

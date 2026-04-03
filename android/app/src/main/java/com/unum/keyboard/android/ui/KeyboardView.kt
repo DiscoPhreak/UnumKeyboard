@@ -11,21 +11,16 @@ import android.util.AttributeSet
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
-import android.graphics.Path
 import com.unum.keyboard.core.KeyAction
 import com.unum.keyboard.core.KeyboardState
 import com.unum.keyboard.core.TextAction
 import com.unum.keyboard.gesture.FlickGestureDetector
-import com.unum.keyboard.gesture.GestureCandidate
-import com.unum.keyboard.gesture.GestureDecoder
-import com.unum.keyboard.gesture.GesturePathTracker
 import com.unum.keyboard.hittarget.DynamicHitTargetResolver
 import com.unum.keyboard.hittarget.TouchCalibrator
 import com.unum.keyboard.layout.FlickDirection
 import com.unum.keyboard.layout.KeyGeometry
 import com.unum.keyboard.layout.KeyType
 import com.unum.keyboard.layout.LayoutEngine
-import com.unum.keyboard.prediction.TrieDictionary
 import com.unum.keyboard.settings.KeyboardConfig
 import com.unum.keyboard.settings.KeyboardTheme
 import com.unum.keyboard.text.CursorController
@@ -41,8 +36,6 @@ class KeyboardView @JvmOverloads constructor(
         fun onText(text: String)
         fun onDelete()
         fun onEnter()
-        /** Called when gesture typing produces word candidates */
-        fun onGestureWord(candidates: List<GestureCandidate>) {}
         /** Called when a text editing action is triggered (M10) */
         fun onTextAction(action: TextAction) {}
         /** Called when an editing toolbar action is triggered (M10) */
@@ -50,9 +43,6 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     var listener: KeyboardActionListener? = null
-
-    /** Enable/disable gesture typing mode */
-    var gestureTypingEnabled: Boolean = false
 
     private val keyboardState = KeyboardState()
     private val layoutEngine = LayoutEngine()
@@ -65,15 +55,9 @@ class KeyboardView @JvmOverloads constructor(
     private val flickDetector = FlickGestureDetector()
     private var flickOriginKey: KeyGeometry? = null
 
-    // Gesture typing (M8)
-    private val gestureTracker = GesturePathTracker()
-
     // Spacebar trackpad cursor control (M10)
     private val cursorController = CursorController()
     private var isSpacebarTrackpadActive = false
-    private var gestureDecoder: GestureDecoder? = null
-    private var isGesturing: Boolean = false
-    private val gesturePath = Path()  // Android graphics path for drawing the swipe trail
 
     /** Current word prefix — set by the IME to inform hit target predictions */
     var currentPrefix: String = ""
@@ -116,12 +100,6 @@ class KeyboardView @JvmOverloads constructor(
         color = FLICK_HINT_COLOR
         textAlign = Paint.Align.CENTER
     }
-    private val gestureTrailPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = GESTURE_TRAIL_COLOR
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-        strokeJoin = Paint.Join.ROUND
-    }
     private val trackpadActivePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = TRACKPAD_ACTIVE_COLOR
         style = Paint.Style.FILL
@@ -146,7 +124,6 @@ class KeyboardView @JvmOverloads constructor(
         textPaint.color = theme.keyTextColor.toInt()
         specialTextPaint.color = theme.specialKeyTextColor.toInt()
         flickHintPaint.color = theme.flickHintColor.toInt()
-        gestureTrailPaint.color = theme.gestureTrailColor.toInt()
         trackpadActivePaint.color = theme.trackpadActiveColor.toInt()
         invalidate()
     }
@@ -193,16 +170,7 @@ class KeyboardView @JvmOverloads constructor(
             textPaint.textSize = activeConfig.keyTextSize * density
             specialTextPaint.textSize = activeConfig.specialKeyTextSize * density
             flickHintPaint.textSize = activeConfig.flickHintTextSize * density
-            gestureTrailPaint.strokeWidth = GESTURE_TRAIL_WIDTH * density
         }
-    }
-
-    /**
-     * Set the dictionary for gesture typing word lookup.
-     * Must be called before gesture typing will produce results.
-     */
-    fun setDictionary(dictionary: TrieDictionary) {
-        gestureDecoder = GestureDecoder(dictionary)
     }
 
     /**
@@ -248,11 +216,6 @@ class KeyboardView @JvmOverloads constructor(
             }
         }
 
-        // Draw gesture trail
-        if (isGesturing && !gesturePath.isEmpty) {
-            canvas.drawPath(gesturePath, gestureTrailPaint)
-        }
-
         // Draw trackpad active indicator on spacebar
         if (isSpacebarTrackpadActive) {
             val spaceGeo = layout.keys.find { it.key.type == KeyType.SPACE }
@@ -291,15 +254,6 @@ class KeyboardView @JvmOverloads constructor(
                     flickOriginKey = geo
                     flickDetector.onTouchStart(event.x, event.y, timestamp)
 
-                    // Start gesture tracking if enabled (on character keys only)
-                    if (gestureTypingEnabled && geo.key.type == KeyType.CHARACTER) {
-                        gestureTracker.start(event.x, event.y, timestamp)
-                        gestureTracker.updateCurrentKey(geo)
-                        gesturePath.reset()
-                        gesturePath.moveTo(event.x, event.y)
-                        isGesturing = false // not yet — becomes true after crossing 2+ keys
-                    }
-
                     // Start cursor controller tracking on spacebar (M10)
                     if (geo.key.type == KeyType.SPACE) {
                         cursorController.onTouchStart(event.x, event.y, timestamp)
@@ -324,9 +278,7 @@ class KeyboardView @JvmOverloads constructor(
                     if (consumed) {
                         if (!isSpacebarTrackpadActive) {
                             isSpacebarTrackpadActive = true
-                            // Cancel gesture/flick tracking
                             flickDetector.cancel()
-                            gestureTracker.reset()
                             performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
                         }
                         // Dispatch pending cursor actions
@@ -338,67 +290,38 @@ class KeyboardView @JvmOverloads constructor(
                     }
                 }
 
-                // Gesture typing mode: track the swipe path
-                if (gestureTracker.isActive) {
-                    gestureTracker.addPoint(event.x, event.y, timestamp)
-                    gesturePath.lineTo(event.x, event.y)
+                // Check for flick during move (for immediate feedback)
+                val flickDir = flickDetector.onTouchMove(event.x, event.y, timestamp)
+                if (flickDir != FlickDirection.NONE) {
+                    val originKey = flickOriginKey
+                    if (originKey != null) {
+                        val flickChar = originKey.key.flickChar(flickDir)
+                        if (flickChar != null) {
+                            isBackspaceHeld = false
+                            handler.removeCallbacks(backspaceRepeatRunnable)
 
-                    val geo = layout.findKeyAt(event.x, event.y)
-                    gestureTracker.updateCurrentKey(geo)
-
-                    // Transition to gesture mode once we've crossed enough keys
-                    if (!isGesturing && gestureTracker.isValidGesture()) {
-                        isGesturing = true
-                        // Cancel flick detection — this is a swipe, not a flick
-                        flickDetector.cancel()
-                        flickOriginKey = null
-                        isBackspaceHeld = false
-                        handler.removeCallbacks(backspaceRepeatRunnable)
-                    }
-
-                    if (isGesturing) {
-                        // Highlight current key under finger
-                        pressedKeyId = geo?.key?.id
-                        invalidate()
-                        return true
+                            listener?.onText(flickChar)
+                            keyboardState.autoUnshift()
+                            recomputeLayout()
+                            performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                            pressedKeyId = null
+                            flickOriginKey = null
+                            invalidate()
+                            return true
+                        }
                     }
                 }
 
-                // Check for flick during move (for immediate feedback)
-                if (!isGesturing) {
-                    val flickDir = flickDetector.onTouchMove(event.x, event.y, timestamp)
-                    if (flickDir != FlickDirection.NONE) {
-                        val originKey = flickOriginKey
-                        if (originKey != null) {
-                            val flickChar = originKey.key.flickChar(flickDir)
-                            if (flickChar != null) {
-                                isBackspaceHeld = false
-                                handler.removeCallbacks(backspaceRepeatRunnable)
-                                gestureTracker.reset()
-
-                                listener?.onText(flickChar)
-                                keyboardState.autoUnshift()
-                                recomputeLayout()
-                                performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
-                                pressedKeyId = null
-                                flickOriginKey = null
-                                invalidate()
-                                return true
-                            }
-                        }
+                // Normal move tracking for key highlight
+                val geo = resolveKey(event.x, event.y)
+                val newId = geo?.key?.id
+                if (newId != pressedKeyId && !flickDetector.tracking) {
+                    if (pressedKeyId == "backspace") {
+                        isBackspaceHeld = false
+                        handler.removeCallbacks(backspaceRepeatRunnable)
                     }
-
-                    // Normal move tracking for key highlight
-                    val geo = resolveKey(event.x, event.y)
-                    val newId = geo?.key?.id
-                    if (newId != pressedKeyId && !flickDetector.tracking) {
-                        if (pressedKeyId == "backspace") {
-                            isBackspaceHeld = false
-                            handler.removeCallbacks(backspaceRepeatRunnable)
-                        }
-                        pressedKeyId = newId
-                        invalidate()
-                    }
+                    pressedKeyId = newId
+                    invalidate()
                 }
                 return true
             }
@@ -418,35 +341,6 @@ class KeyboardView @JvmOverloads constructor(
                 cursorController.cancel()
 
                 if (event.action == MotionEvent.ACTION_UP) {
-                    // Check if we were gesture typing
-                    if (isGesturing) {
-                        gestureTracker.addPoint(event.x, event.y, timestamp)
-                        val geo = layout.findKeyAt(event.x, event.y)
-                        gestureTracker.updateCurrentKey(geo)
-
-                        val gesturePath = gestureTracker.finish()
-                        val decoder = gestureDecoder
-                        if (decoder != null && gesturePath.characters.isNotEmpty()) {
-                            val candidates = decoder.decode(gesturePath, layout.keys)
-                            if (candidates.isNotEmpty()) {
-                                // Insert the top candidate and notify listener of all candidates
-                                listener?.onText(candidates[0].word)
-                                listener?.onText(" ") // auto-space after gesture word
-                                listener?.onGestureWord(candidates)
-                            }
-                        }
-
-                        isGesturing = false
-                        this.gesturePath.reset()
-                        gestureTracker.reset()
-                        pressedKeyId = null
-                        flickOriginKey = null
-                        invalidate()
-                        return true
-                    }
-
-                    gestureTracker.reset()
-
                     val flickResult = flickDetector.onTouchEnd(event.x, event.y, timestamp)
                     val originKey = flickOriginKey
 
@@ -468,9 +362,6 @@ class KeyboardView @JvmOverloads constructor(
                     }
                 } else {
                     flickDetector.cancel()
-                    gestureTracker.reset()
-                    isGesturing = false
-                    gesturePath.reset()
                 }
 
                 pressedKeyId = null
@@ -532,7 +423,6 @@ class KeyboardView @JvmOverloads constructor(
         private const val SPECIAL_TEXT_COLOR = 0xFFBBBBBB.toInt()
 
         private const val FLICK_HINT_COLOR = 0xFF666666.toInt()  // Subtle gray hints
-        private const val GESTURE_TRAIL_COLOR = 0x80FFFFFF.toInt() // Semi-transparent white trail
         private const val TRACKPAD_ACTIVE_COLOR = 0xFF0D47A1.toInt() // Blue tint when trackpad active
         private const val KEYBOARD_HEIGHT_DP = 260f
         private const val HORIZONTAL_PADDING = 3f  // dp
@@ -541,7 +431,6 @@ class KeyboardView @JvmOverloads constructor(
         private const val TEXT_SIZE = 22f            // sp
         private const val SPECIAL_TEXT_SIZE = 14f    // sp
         private const val FLICK_HINT_SIZE = 10f      // sp
-        private const val GESTURE_TRAIL_WIDTH = 3f    // dp
 
         private const val BACKSPACE_REPEAT_DELAY = 400L   // ms before repeat starts
         private const val BACKSPACE_REPEAT_INTERVAL = 50L  // ms between repeats
