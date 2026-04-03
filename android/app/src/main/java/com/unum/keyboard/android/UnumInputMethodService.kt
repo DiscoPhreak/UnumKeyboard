@@ -15,7 +15,7 @@ import com.unum.keyboard.android.ui.KeyboardView
 import com.unum.keyboard.android.ui.SuggestionBar
 import com.unum.keyboard.core.TextAction
 import com.unum.keyboard.prediction.PredictionService
-import com.unum.keyboard.prediction.StubNeuralReranker
+// ContextReranker is created via predictionService.createReranker()
 import com.unum.keyboard.prediction.TwoStagePipeline
 import com.unum.keyboard.settings.KeyboardConfig
 import com.unum.keyboard.settings.KeyboardTheme
@@ -87,7 +87,7 @@ class UnumInputMethodService : InputMethodService(),
 
             pipeline = TwoStagePipeline(
                 predictionService = predictionService,
-                reranker = StubNeuralReranker(),
+                reranker = predictionService.createReranker(),
                 enabled = enhancedPredictions
             ).also { p ->
                 p.onPredictionsUpdated = { predictions ->

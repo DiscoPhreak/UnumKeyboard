@@ -54,45 +54,7 @@ class StubNeuralReranker : NeuralReranker {
 }
 
 /**
- * ONNX Runtime-backed reranker. Placeholder for real implementation.
- *
- * When implemented, this will:
- * 1. Tokenize context + each candidate using WordPiece tokenizer
- * 2. Batch all candidates into a single inference call
- * 3. Return softmax scores from the model output
- *
- * Target latency: <50ms for 10 candidates on mid-range device (Pixel 6a, iPhone 12)
- * Target memory: <40MB total (model weights + inference working memory)
+ * ONNX Runtime-backed reranker. Reserved for future use when a trained
+ * transformer model is available. See ContextReranker for the current
+ * feature-based implementation that replaces the stub.
  */
-class OnnxNeuralReranker(
-    private val modelPath: String
-) : NeuralReranker {
-
-    private var _isReady = false
-    override val isReady: Boolean get() = _isReady
-
-    override suspend fun load() {
-        // TODO: Load ONNX model via ORT session
-        // val sessionOptions = OrtEnvironment.getEnvironment().createSession(modelPath)
-        // Run dummy inference to warm up
-        _isReady = true
-    }
-
-    override fun release() {
-        // TODO: Release ORT session
-        _isReady = false
-    }
-
-    override suspend fun score(context: List<String>, candidates: List<String>): Map<String, Float> {
-        if (!_isReady) return candidates.associateWith { 0.5f }
-
-        // TODO: Real ONNX inference
-        // 1. Tokenize: [CLS] + context_tokens + [SEP] + candidate_tokens + [SEP]
-        // 2. Create input tensors (input_ids, attention_mask, token_type_ids)
-        // 3. Run batched inference for all candidates
-        // 4. Extract scores from output tensor
-        // 5. Apply softmax normalization
-
-        return candidates.associateWith { 0.5f }
-    }
-}
