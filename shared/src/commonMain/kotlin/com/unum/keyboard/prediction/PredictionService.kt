@@ -66,6 +66,7 @@ class PredictionService {
             }
         }
         pe.setMaxUnigramFreq(maxFreq)
+        maxUnigramFreq = maxFreq
 
         // Initialize user learning
         val lm = LearningManager(dict)
@@ -134,6 +135,20 @@ class PredictionService {
     fun saveLearningData(): String {
         return learningManager?.serialize() ?: ""
     }
+
+    // ---- Reranker ----
+
+    /**
+     * Create a ContextReranker backed by this service's dictionary and n-gram model.
+     * Returns StubNeuralReranker if the service is not yet initialized.
+     */
+    fun createReranker(): NeuralReranker {
+        val dict = dictionary ?: return StubNeuralReranker()
+        val ngram = ngramModel ?: return StubNeuralReranker()
+        return ContextReranker(dict, ngram, maxUnigramFreq)
+    }
+
+    private var maxUnigramFreq: Int = 1
 
     // ---- Autocorrect ----
 

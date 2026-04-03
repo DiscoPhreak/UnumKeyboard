@@ -6,6 +6,7 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
     private var suggestionBar: SuggestionBar!
     private var currentWord = ""
     private var previousWord = ""
+    private var contextWords: [String] = []
 
     private let predictionBridge = PredictionBridge()
 
@@ -39,15 +40,11 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
         container.addArrangedSubview(keyboardView)
         keyboardView.heightAnchor.constraint(equalToConstant: 260).isActive = true
 
+        // Pipeline-driven prediction updates (Stage 1 + Stage 2 reranking)
+        predictionBridge.onPredictionsUpdated = { [weak self] words in
+            self?.suggestionBar.updateSuggestions(words)
+        }
         predictionBridge.loadDictionary(bundle: Bundle(for: type(of: self)))
-    }
-
-    // MARK: - Prediction updates
-
-    private func updatePredictions() {
-        guard predictionBridge.isLoaded else { return }
-        let suggestions = predictionBridge.predict()
-        suggestionBar.updateSuggestions(suggestions)
     }
 
     // MARK: - KeyboardViewDelegate
@@ -56,56 +53,61 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
         if text == " " {
             if !currentWord.isEmpty {
                 let correction = predictionBridge.getAutoCorrection(currentWord)
+                let committedWord: String
+
                 if let correction = correction, correction.shouldAutoApply {
                     for _ in 0..<currentWord.count { textDocumentProxy.deleteBackward() }
                     textDocumentProxy.insertText(correction.corrected + " ")
                     lastAutoCorrection = (original: currentWord, corrected: correction.corrected)
-                    predictionBridge.commitWord(correction.corrected)
+                    committedWord = correction.corrected
                 } else {
                     textDocumentProxy.insertText(" ")
                     lastAutoCorrection = nil
-                    predictionBridge.commitWord(currentWord)
+                    committedWord = currentWord
                 }
+
+                contextWords.append(committedWord)
+                if contextWords.count > 5 { contextWords.removeFirst() }
+                predictionBridge.onWordCommitted(committedWord)
                 previousWord = currentWord
             } else {
                 textDocumentProxy.insertText(" ")
                 lastAutoCorrection = nil
             }
             currentWord = ""
-            predictionBridge.updatePrefix("")
-            updatePredictions()
         } else if text == "." || text == "!" || text == "?" {
             if !currentWord.isEmpty {
                 let correction = predictionBridge.getAutoCorrection(currentWord)
+                let committedWord: String
+
                 if let correction = correction, correction.shouldAutoApply {
                     for _ in 0..<currentWord.count { textDocumentProxy.deleteBackward() }
                     textDocumentProxy.insertText(correction.corrected + text)
-                    predictionBridge.commitWord(correction.corrected)
+                    committedWord = correction.corrected
                 } else {
                     textDocumentProxy.insertText(text)
-                    predictionBridge.commitWord(currentWord)
+                    committedWord = currentWord
                 }
+
+                predictionBridge.onWordCommitted(committedWord)
                 previousWord = currentWord
             } else {
                 textDocumentProxy.insertText(text)
             }
             currentWord = ""
             previousWord = ""
+            contextWords = []
             lastAutoCorrection = nil
-            predictionBridge.resetContext()
-            predictionBridge.updatePrefix("")
-            suggestionBar.clear()
+            predictionBridge.onSentenceBoundary()
         } else {
             textDocumentProxy.insertText(text)
             lastAutoCorrection = nil
             currentWord += text
-            predictionBridge.updatePrefix(currentWord)
-            updatePredictions()
+            predictionBridge.onKeystroke(prefix: currentWord, context: contextWords)
         }
     }
 
     func keyboardViewDidTapDelete(_ view: KeyboardView) {
-        // Undo auto-correction on immediate backspace
         if let undo = lastAutoCorrection {
             for _ in 0..<(undo.corrected.count + 1) {
                 textDocumentProxy.deleteBackward()
@@ -114,8 +116,7 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
             lastAutoCorrection = nil
             currentWord = ""
             predictionBridge.addToBlockList(undo.original)
-            predictionBridge.updatePrefix("")
-            updatePredictions()
+            predictionBridge.onKeystroke(prefix: "", context: contextWords)
             return
         }
 
@@ -123,20 +124,18 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
         if !currentWord.isEmpty {
             currentWord.removeLast()
         }
-        predictionBridge.updatePrefix(currentWord)
-        updatePredictions()
+        predictionBridge.onKeystroke(prefix: currentWord, context: contextWords)
     }
 
     func keyboardViewDidTapEnter(_ view: KeyboardView) {
         if !currentWord.isEmpty {
-            predictionBridge.commitWord(currentWord)
+            predictionBridge.onWordCommitted(currentWord)
         }
         textDocumentProxy.insertText("\n")
         currentWord = ""
         previousWord = ""
-        predictionBridge.resetContext()
-        predictionBridge.updatePrefix("")
-        suggestionBar.clear()
+        contextWords = []
+        predictionBridge.onSentenceBoundary()
     }
 
     func keyboardViewDidTapShift(_ view: KeyboardView) {
@@ -180,11 +179,11 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
             textDocumentProxy.deleteBackward()
         }
         textDocumentProxy.insertText(word + " ")
-        predictionBridge.commitWord(word)
+        contextWords.append(word)
+        if contextWords.count > 5 { contextWords.removeFirst() }
+        predictionBridge.onWordCommitted(word)
         previousWord = word
         currentWord = ""
-        predictionBridge.updatePrefix("")
-        updatePredictions()
     }
 
     // MARK: - Lifecycle
@@ -192,5 +191,6 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         predictionBridge.persistData()
+        predictionBridge.destroy()
     }
 }
