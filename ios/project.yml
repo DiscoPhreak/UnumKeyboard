@@ -26,5 +26,10 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.unum.keyboard.KeyboardExtension
         INFOPLIST_FILE: KeyboardExtension/Info.plist
         SWIFT_VERSION: "5.9"
+        FRAMEWORK_SEARCH_PATHS: "$(inherited) ${SRCROOT}/../shared/build/XCFrameworks/release"
     dependencies:
       - target: UnumKeyboard
+      - framework: "${SRCROOT}/../shared/build/XCFrameworks/release/shared.xcframework"
+    resources:
+      - path: Resources/en-US
+        buildPhase: resources

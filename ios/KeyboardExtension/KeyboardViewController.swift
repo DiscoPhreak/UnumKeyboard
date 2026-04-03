@@ -7,13 +7,10 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
     private var currentWord = ""
     private var previousWord = ""
 
-    // Autocorrect undo state — stores the original and corrected word
-    // so backspace immediately after auto-correction reverts to the original.
-    private var lastAutoCorrection: (original: String, corrected: String)?
+    private let predictionBridge = PredictionBridge()
 
-    // Prediction and autocorrect will be powered by the shared KMP framework
-    // once the Xcode project links the XCFramework. Learning data and block
-    // list will be persisted via UserDefaults once the shared KMP framework is linked.
+    // Autocorrect undo state
+    private var lastAutoCorrection: (original: String, corrected: String)?
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -41,6 +38,16 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
         keyboardView.translatesAutoresizingMaskIntoConstraints = false
         container.addArrangedSubview(keyboardView)
         keyboardView.heightAnchor.constraint(equalToConstant: 260).isActive = true
+
+        predictionBridge.loadDictionary(bundle: Bundle(for: type(of: self)))
+    }
+
+    // MARK: - Prediction updates
+
+    private func updatePredictions() {
+        guard predictionBridge.isLoaded else { return }
+        let suggestions = predictionBridge.predict()
+        suggestionBar.updateSuggestions(suggestions)
     }
 
     // MARK: - KeyboardViewDelegate
@@ -48,53 +55,67 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
     func keyboardView(_ view: KeyboardView, didTapText text: String) {
         if text == " " {
             if !currentWord.isEmpty {
-                // TODO: Once KMP framework is linked, call:
-                //   let correction = predictionService.getAutoCorrection(currentWord)
-                //   if correction.shouldAutoApply {
-                //       for _ in 0..<currentWord.count { textDocumentProxy.deleteBackward() }
-                //       textDocumentProxy.insertText(correction.corrected + " ")
-                //       lastAutoCorrection = (original: currentWord, corrected: correction.corrected)
-                //   } else {
-                //       textDocumentProxy.insertText(" ")
-                //       lastAutoCorrection = nil
-                //   }
-                textDocumentProxy.insertText(" ")
-                lastAutoCorrection = nil
+                let correction = predictionBridge.getAutoCorrection(currentWord)
+                if let correction = correction, correction.shouldAutoApply {
+                    for _ in 0..<currentWord.count { textDocumentProxy.deleteBackward() }
+                    textDocumentProxy.insertText(correction.corrected + " ")
+                    lastAutoCorrection = (original: currentWord, corrected: correction.corrected)
+                    predictionBridge.commitWord(correction.corrected)
+                } else {
+                    textDocumentProxy.insertText(" ")
+                    lastAutoCorrection = nil
+                    predictionBridge.commitWord(currentWord)
+                }
                 previousWord = currentWord
             } else {
                 textDocumentProxy.insertText(" ")
                 lastAutoCorrection = nil
             }
             currentWord = ""
+            predictionBridge.updatePrefix("")
+            updatePredictions()
         } else if text == "." || text == "!" || text == "?" {
-            // TODO: Same auto-correction pattern as space branch once KMP linked
-            textDocumentProxy.insertText(text)
             if !currentWord.isEmpty {
+                let correction = predictionBridge.getAutoCorrection(currentWord)
+                if let correction = correction, correction.shouldAutoApply {
+                    for _ in 0..<currentWord.count { textDocumentProxy.deleteBackward() }
+                    textDocumentProxy.insertText(correction.corrected + text)
+                    predictionBridge.commitWord(correction.corrected)
+                } else {
+                    textDocumentProxy.insertText(text)
+                    predictionBridge.commitWord(currentWord)
+                }
                 previousWord = currentWord
+            } else {
+                textDocumentProxy.insertText(text)
             }
             currentWord = ""
-            previousWord = "" // sentence boundary
+            previousWord = ""
             lastAutoCorrection = nil
+            predictionBridge.resetContext()
+            predictionBridge.updatePrefix("")
+            suggestionBar.clear()
         } else {
             textDocumentProxy.insertText(text)
             lastAutoCorrection = nil
             currentWord += text
+            predictionBridge.updatePrefix(currentWord)
+            updatePredictions()
         }
     }
 
     func keyboardViewDidTapDelete(_ view: KeyboardView) {
-        // Undo auto-correction: if backspace immediately follows an auto-correction,
-        // revert to the original word
+        // Undo auto-correction on immediate backspace
         if let undo = lastAutoCorrection {
-            // Delete "corrected " (corrected word + space)
             for _ in 0..<(undo.corrected.count + 1) {
                 textDocumentProxy.deleteBackward()
             }
-            // Re-insert "original "
             textDocumentProxy.insertText(undo.original + " ")
             lastAutoCorrection = nil
             currentWord = ""
-            // TODO: Once KMP linked, call predictionService.addToBlockList(undo.original)
+            predictionBridge.addToBlockList(undo.original)
+            predictionBridge.updatePrefix("")
+            updatePredictions()
             return
         }
 
@@ -102,11 +123,20 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
         if !currentWord.isEmpty {
             currentWord.removeLast()
         }
+        predictionBridge.updatePrefix(currentWord)
+        updatePredictions()
     }
 
     func keyboardViewDidTapEnter(_ view: KeyboardView) {
+        if !currentWord.isEmpty {
+            predictionBridge.commitWord(currentWord)
+        }
         textDocumentProxy.insertText("\n")
         currentWord = ""
+        previousWord = ""
+        predictionBridge.resetContext()
+        predictionBridge.updatePrefix("")
+        suggestionBar.clear()
     }
 
     func keyboardViewDidTapShift(_ view: KeyboardView) {
@@ -140,23 +170,27 @@ class KeyboardViewController: UIInputViewController, KeyboardViewDelegate, Sugge
     }
 
     func keyboardView(_ view: KeyboardView, didExtendSelection offset: Int) {
-        // UITextDocumentProxy doesn't have direct selection extension API.
-        // We use adjustTextPosition which moves the cursor — for selection,
-        // apps would need the full UITextInput protocol. This is the best
-        // approximation available in a keyboard extension.
         textDocumentProxy.adjustTextPosition(byCharacterOffset: offset)
     }
 
     // MARK: - SuggestionBarDelegate
 
     func suggestionBar(_ bar: SuggestionBar, didSelectSuggestion word: String) {
-        // Delete current partial word and replace with selection
         for _ in 0..<currentWord.count {
             textDocumentProxy.deleteBackward()
         }
         textDocumentProxy.insertText(word + " ")
+        predictionBridge.commitWord(word)
         previousWord = word
         currentWord = ""
-        // Learning: suggestion accepted (will call shared KMP once linked)
+        predictionBridge.updatePrefix("")
+        updatePredictions()
+    }
+
+    // MARK: - Lifecycle
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        predictionBridge.persistData()
     }
 }
